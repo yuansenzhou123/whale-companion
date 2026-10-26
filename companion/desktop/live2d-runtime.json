@@ -1,0 +1,30 @@
+[
+  {
+    "name": "live2d-py",
+    "version": "1.0.0",
+    "wheel": "live2d_py-1.0.0-cp311-abi3-win_amd64.whl",
+    "sha256": "5489e08b77c0b97584bc5346b58d6877db23a9ba94c83665a450ed8a5d6d6c8d",
+    "source": "https://files.pythonhosted.org/packages/f5/48/5454b46ab01144fb63bf24cf88078257ca05f63b62a7972dc49bb54f7c10/live2d_py-1.0.0-cp311-abi3-win_amd64.whl"
+  },
+  {
+    "name": "glfw",
+    "version": "2.11.0",
+    "wheel": "glfw-2.11.0-py2.py3-none-win_amd64.whl",
+    "sha256": "bd39c1adb57b7273813e33b9768bed88d1ea656abfc914b4a6424ec0c5d62674",
+    "source": "https://files.pythonhosted.org/packages/78/d6/b0d9d83177397c018efa3579c54990f8d9b3af17fdcf97b0e549609a0571/glfw-2.11.0-py2.py3-none-win_amd64.whl"
+  },
+  {
+    "name": "PyOpenGL",
+    "version": "3.1.10",
+    "wheel": "pyopengl-3.1.10-py3-none-any.whl",
+    "sha256": "794a943daced39300879e4e47bd94525280685f42dbb5a998d336cfff151d74f",
+    "source": "https://files.pythonhosted.org/packages/de/e4/1ba6f44e491c4eece978685230dde56b14d51a0365bc1b774ddaa94d14cd/pyopengl-3.1.10-py3-none-any.whl"
+  },
+  {
+    "name": "pycparser",
+    "version": "2.23",
+    "wheel": "pycparser-2.23-py3-none-any.whl",
+    "sha256": "e5c6e8d3fbad53479cab09ac03729e0a9faf2bee3db8208a550daf5af81a5934",
+    "source": "https://files.pythonhosted.org/packages/a0/e3/59cd50310fc9b59512193629e1984c1f95e5c8ae6e5d8c69532ccc65a7fe/pycparser-2.23-py3-none-any.whl"
+  }
+]

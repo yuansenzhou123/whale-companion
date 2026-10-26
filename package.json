@@ -1,0 +1,30 @@
+﻿{
+    "name":  "whale-girl-bot",
+    "version":  "3.0.0",
+    "private":  false,
+    "description":  "鲸鲸 —— 可接微信群 / B 站分享的 DeepSeek 鲸鱼娘聊天机器人",
+    "main":  "server.js",
+    "type":  "commonjs",
+    "scripts":  {
+                    "start":  "node server.js",
+                    "doctor":  "node server.js --doctor",
+                    "test":  "node --test \"tests/*.test.js\""
+                },
+    "engines":  {
+                    "node":  "\u003e=18"
+                },
+    "keywords":  [
+                     "deepseek",
+                     "chatbot",
+                     "wechat",
+                     "wechat-bot",
+                     "bilibili",
+                     "llm"
+                 ],
+    "license":  "MIT",
+    "author":  "",
+    "repository":  {
+                       "type":  "git",
+                       "url":  ""
+                   }
+}

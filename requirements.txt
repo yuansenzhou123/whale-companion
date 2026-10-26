@@ -1,0 +1,8 @@
+# 微信桥接的可选依赖（仅 Windows 需要）
+# 安装：py -3.12 -m pip install -r requirements.txt
+wechatauto-replica>=1.2.7
+psutil>=5.9
+pywin32>=306
+# 微信图片/动态表情转成标准图片后再送识图
+Pillow>=10.4
+imageio-ffmpeg==0.6.0
