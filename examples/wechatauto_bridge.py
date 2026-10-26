@@ -1653,6 +1653,40 @@ def main():
         display_name=display_name, log=log,
     )
     threading.Thread(target=proactive_poller.run, daemon=True).start()
+    if (cfg.get("actions") or {}).get("enabled"):
+        from wechat_action_worker import WeChatActionWorker,send_group_verified,send_group_ui_once
+        from moment_publisher import MomentPublisher,WeChatMomentUI
+        def action_paused():
+            return (AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen()
+                    or os.path.exists(os.path.join(ROOT,"data","PAUSED")))
+        def action_driver():
+            nonlocal gui
+            with gui_lock:
+                if gui is None:gui=WeChatGUI()
+                driver=UIA_CACHE.get("u") or gui._get_uia()
+                UIA_CACHE["u"]=driver
+                return driver
+        def publish_action_moment(text):
+            if action_paused():return {"outcome":"draft","error":"当前窗口忙碌，保留文案"}
+            from wechatauto.moment import MomentDB
+            publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused),lambda:MomentDB(db).get_my_moments(limit=8))
+            with send_lock:
+                return with_window_on_top(lambda:publisher.publish(text))
+        def action_send(text,name,username):
+            sender=lambda text,name,username:send_text(text,name,username,queue_if_busy=False)
+            if username.endswith("@chatroom"):
+                def send_once(text,name,username):
+                    if action_paused():return False
+                    with send_lock:
+                        if action_paused():return False
+                        return with_window_on_top(lambda:send_group_ui_once(action_driver(),text,name))
+                return send_group_verified(send_once,db.get_messages,text,name,username,me)
+            return sender(text,name,username)
+        action_worker=WeChatActionWorker(base_url=bot_url.rsplit("/webhook",1)[0],token=token,http=requests,
+            send=action_send,publish_moment=publish_action_moment,paused=action_paused,
+            display_name=display_name,log=log,dry_run=os.environ.get("WHALE_ACTION_DRY_RUN")=="1")
+        threading.Thread(target=action_worker.run,daemon=True).start()
+        log("v3 私聊动作通道已启动（群聊代发；朋友圈实验发表）")
     log("已启动。鲸鲸地址：", bot_url)
 
     try:

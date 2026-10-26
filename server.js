@@ -32,6 +32,7 @@ const {WatchCompanion} = require('./src/watchCompanion');
 const {companionRoute} = require('./src/companionRoutes');
 const {Relationship} = require('./src/relationship');
 const {SharedMemory} = require('./src/sharedMemory');
+const {WeChatActions} = require('./src/wechatActions');
 const {preservePrompt}=require('./src/fullPersona');
 const {normalizeWhitelist,shareAllowed}=require('./src/sharePolicy');
 
@@ -133,6 +134,8 @@ function createRuntime({ root = projectRoot(), env = process.env, loggerLevel } 
   bot.companion = runtime.companion;
   runtime.sharedMemory = new SharedMemory({config,store,relationship:runtime.relationship,logger});
   bot.sharedMemory = runtime.sharedMemory;
+  runtime.actions = new WeChatActions({config,store,dryRun:env.WHALE_ACTION_DRY_RUN==='1'});
+  bot.wechatActions = runtime.actions;
   store.onMessage = (session,entry) => runtime.sharedMemory.recordEntry(session,entry);
   runtime.proactiveChat = new ProactiveChat({ config, store, bot, llm, companion: runtime.companion, relationship: runtime.relationship });
   watchConfigFile(runtime);
@@ -917,8 +920,18 @@ function createHandler(runtime) {
     const method = req.method || 'GET';
 
     try {
+      if (pathname.startsWith('/api/actions/')) {
+        if(pathname==='/api/actions/status'&&method==='GET')return json(res,200,runtime.actions.view());
+        if(method!=='POST')return json(res,405,{ok:false,error:'method not allowed'});
+        const body=await readBody(req),gateway=gateways.get('wechat');
+        if(!gateway||!String(gateway.options.inboundToken||'').trim()||!gateway.verifyToken(req,body))return json(res,403,{ok:false,error:'token 不对'});
+        if(pathname==='/api/actions/next')return json(res,200,runtime.actions.next());
+        if(pathname==='/api/actions/validate')return json(res,200,runtime.actions.validate(String(body.id||''),String(body.lease||'')));
+        if(pathname==='/api/actions/ack')return json(res,200,runtime.actions.ack(body));
+        return json(res,404,{ok:false,error:'not found'});
+      }
       if (pathname.startsWith('/api/companion/')) return await companionRoute(runtime, req, res, url, {json, readBody});
-      if (pathname === '/healthz') return json(res, 200, { ok: true, up: true });
+      if (pathname === '/healthz') return json(res, 200, { ok: true, up: true, line: fs.existsSync(path.join(runtime.config.root,'VERSION-LINE.json'))?JSON.parse(fs.readFileSync(path.join(runtime.config.root,'VERSION-LINE.json'),'utf8')).line:'v2', root:runtime.config.root, actionDryRun:runtime.actions.dryRun });
       if (pathname === '/api/memory/status' && method === 'GET') return json(res,200,{ok:true,...runtime.sharedMemory.status()});
 
       if (pathname === '/api/status' && method === 'GET') {

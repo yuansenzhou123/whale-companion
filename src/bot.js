@@ -564,6 +564,10 @@ class Bot {
     }
     // 后面生成的文本要判断「是不是在对主人说话」（例如不许带脏字回骂）
     msg.isMaster = isMaster;
+    if(this.wechatActions){
+      const task=this.wechatActions.handle(msg);
+      if(task)return {action:'command',commandType:'wechat_action',key,msg,atMe,text:task.text,reason:'wechat_action'};
+    }
     if (this.sharedMemory) {
       try {
         const result = this.sharedMemory.observe(msg);
@@ -885,6 +889,7 @@ class Bot {
     if (this.companion) system += this.companion.contextFor({...msg, isMaster});
     if (this.relationship) system += this.relationship.contextFor({...msg,isMaster});
     if (this.sharedMemory) system += this.sharedMemory.contextFor({...msg,isMaster});
+    if (this.wechatActions) system += this.wechatActions.contextFor(msg);
     system += rhythmHint(replyRhythm(this.config, msg));
     const turns = this.buildTurns(msg, hasText ? history.slice(0, -1) : history);
 

@@ -1,5 +1,7 @@
 {
-  "line": "v2",
+  "line": "v3",
   "baseline": "v2",
-  "backup": "E:\\whale-girl-backups\\v2-20261026-203953"
+  "backup": "E:\\whale-girl-backups\\v2-20261026-203953",
+  "status": "experimental",
+  "port": 8788
 }

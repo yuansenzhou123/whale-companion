@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>鲸鲸 v3 · 代发记录</title>
+<style>body{margin:0;background:#f2f6ff;color:#324766;font:16px/1.7 system-ui,sans-serif}main{max-width:900px;margin:40px auto;padding:24px}h1{font-size:25px}a{color:#557dc0}#status,article,.help{padding:20px;border:1px solid #dce4f6;border-radius:20px;background:white;margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}small{color:#7689a6}.badge{color:#8869b0}button{border:0;border-radius:12px;padding:10px 18px;background:#dce9ff;color:#324766;cursor:pointer}</style>
+<main><h1>鲸鲸 v3 · 代发记录</h1><p><a href="/persona">人设设置</a> · <a href="/relationship">陪伴设置</a> · <a href="/">控制台</a></p><div id="status">正在查看连接状态…</div>
+<div class="help">在主人的微信私聊中指定群名和完整正文，就可以建立任务。这里只展示结果。<br>朋友圈为实验功能；未核实的结果会单独标明，不自动重发。<br><small>“仅草稿”表示正文保存在本项目的任务记录中，不保证微信客户端已有草稿。</small></div>
+<button id="refresh">刷新记录</button><div id="jobs"></div></main>
+<script>
+const status=document.querySelector('#status'),jobs=document.querySelector('#jobs');
+async function refresh(){try{const r=await fetch('/api/actions/status',{cache:'no-store'});if(!r.ok)throw Error('读取失败');const data=await r.json();status.textContent=`v3 ${data.enabled?'动作功能已开启':'动作功能已关闭'} · ${data.dryRun?'当前为预演，不会发送':'实际执行模式'} · ${data.workerConnected?'微信执行器已连接':'微信执行器尚未连接'}`;jobs.replaceChildren();if(!data.jobs.length){jobs.textContent='还没有代发任务。';return;}for(const job of data.jobs){const card=document.createElement('article'),title=document.createElement('strong'),time=document.createElement('small'),body=document.createElement('pre'),error=document.createElement('p');title.textContent=`${job.target} · ${job.statusText}`;time.textContent='  '+new Date(job.createdAt).toLocaleString();body.textContent=job.text;error.textContent=job.error;card.append(title,time,body,error);jobs.append(card);}}catch(e){status.textContent='暂时无法连接 v3 服务。';}}
+document.querySelector('#refresh').onclick=refresh;refresh();setInterval(refresh,5000);
+</script></html>
