@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "鲸鲸 · B站陪看",
+  "version": "1.0.0",
+  "description": "将你选择的 B站视频进度、当前字幕和视频区域画面交给本机鲸鲸桌宠。",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://www.bilibili.com/*", "http://127.0.0.1/*", "http://localhost/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_popup": "popup.html", "default_title": "鲸鲸陪看"},
+  "content_scripts": [{"matches": ["https://www.bilibili.com/video/*", "https://www.bilibili.com/bangumi/play/*", "https://www.bilibili.com/list/*"], "js": ["collector.js"], "run_at": "document_idle"}]
+}

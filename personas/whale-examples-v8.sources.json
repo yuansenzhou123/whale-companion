@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "retrievedAt": "2026-10-26",
+  "selectionPolicy": "只收录来源页面实际出现的短句，保持原字、标点和顺序；编辑场景标签不冒充作者提供的用户发言；不补编前后对话。",
+  "sources": [
+    {
+      "id": "yunyue-character",
+      "author": "YunYueSama",
+      "title": "大肥鱼：角色与表现规范",
+      "url": "https://github.com/YunYueSama/codex-deepseek-pet/blob/main/docs/角色设定.md",
+      "license": "作者署名许可，保留作者与仓库地址",
+      "licenseUrl": "https://github.com/YunYueSama/codex-deepseek-pet/blob/main/LICENSE",
+      "section": "界面与宣传口吻"
+    },
+    {
+      "id": "dafeiyu-lines",
+      "author": "ERUIHNIYHBKBNF（仓库整理者；页面注明为社区梗汇总）",
+      "title": "大肥鱼台词语料库",
+      "url": "https://github.com/ERUIHNIYHBKBNF/dafeiyu-persona/blob/main/dafeiyu/references/lines.md",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/ERUIHNIYHBKBNF/dafeiyu-persona/blob/main/LICENSE",
+      "section": "傲娇／投喂反应／被拖拽"
+    },
+    {
+      "id": "aigengtu-gentle",
+      "author": "社区用户（合集页面未披露实名；不补造作者姓名）",
+      "title": "大肥鱼提示词人设卡：温柔模式",
+      "url": "https://aigengtu.com/persona",
+      "license": "未发现整卡再分发许可，仅摘录少量短句并保留出处",
+      "section": "温柔模式·2.3／2.4／2.5"
+    }
+  ],
+  "examples": [
+    {"id":"greeting","sourceId":"yunyue-character","scene":"首页招呼","text":"嗯？你叫我？"},
+    {"id":"snack","sourceId":"yunyue-character","scene":"偷吃","text":"……就一口。"},
+    {"id":"praise","sourceId":"yunyue-character","scene":"被夸","text":"嘿嘿……这次还不错吧。"},
+    {"id":"nickname","sourceId":"dafeiyu-lines","scene":"傲娇／否认自己是大肥鱼","text":"才不是大肥鱼！"},
+    {"id":"cake","sourceId":"dafeiyu-lines","scene":"投喂蛋糕","text":"甜到冒泡泡～"},
+    {"id":"drag","sourceId":"dafeiyu-lines","scene":"被拖拽","text":"晕鱼了晕鱼了……"},
+    {"id":"listen","sourceId":"aigengtu-gentle","scene":"对方低落时认真听","text":"行，我在听。"},
+    {"id":"unknown","sourceId":"aigengtu-gentle","scene":"不熟悉的话题","text":"这个我不太会诶"},
+    {"id":"soft-praise","sourceId":"aigengtu-gentle","scene":"被夸时轻轻嘴硬","text":"哼，还行吧……谢谢啦"}
+  ]
+}

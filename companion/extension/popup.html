@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>鲸鲸陪看</title>
+<style>body{width:290px;background:#f2f8ff;color:#173953;font:14px 'Microsoft YaHei',sans-serif;padding:16px;margin:0}h2{margin:0 0 12px;color:#277bae}input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #b7d5e9;border-radius:8px;margin:6px 0 14px}button{padding:10px 14px;border:0;border-radius:8px;cursor:pointer;background:#287fb3;color:white;margin:0 7px 10px 0}button.secondary{background:#d9e9f4;color:#284b61}p{line-height:1.7;margin:8px 0}#status{white-space:pre-wrap;color:#41677e}small{color:#57788d}</style>
+<h2>🐋 鲸鲸陪你看</h2><label>本机服务地址<input id="endpoint" value="http://127.0.0.1:8787"></label>
+<button id="start">开始陪看这个视频</button><button class="secondary" id="stop">停止采集</button>
+<p id="status">正在连接……</p><small>只读取你选中的 B 站标签页。画面仅裁取视频区域，由当前识图模型理解；切到其他页面或窗口时停止采样。字幕开启时理解更完整。</small><script src="popup.js"></script></html>
