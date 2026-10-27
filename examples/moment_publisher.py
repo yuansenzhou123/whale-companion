@@ -1,7 +1,7 @@
 """Moments publishing through scoped UIA controls, with verified approved image input.
 
 Discover -> Moments -> camera -> native file picker -> caption -> publish.
-No global coordinate clicks, privacy-setting changes, or automatic retries.
+The camera may use a fresh, window-bound local image match. No blind coordinates, privacy-setting changes, or automatic retries.
 """
 import hashlib,pathlib,re,time
 
@@ -29,7 +29,7 @@ class MomentPublisher:
                 self.sleep(.8)
             return {'outcome':'unknown','error':'已点击发表，但尚未核对到对应的新动态；不自动重发'}
         except Exception as error:
-            reason={'desktop_busy':'当前桌面忙碌，已停止发表操作','action_authorization_changed':'发表授权已改变，已停止操作'}.get(str(error),type(error).__name__)
+            reason={'desktop_busy':'当前桌面忙碌，已停止发表操作','action_authorization_changed':'发表授权已改变，已停止操作','camera_window_missing':'未找到可核对的微信窗口，没有点击相机','camera_window_changed':'微信窗口绑定已变化，没有点击相机','camera_window_not_foreground':'微信已不在前台，没有继续点击相机','camera_window_hidden':'微信窗口已隐藏，没有点击相机','camera_window_too_small':'微信窗口过小，无法核对相机图标','camera_capture_failed':'无法读取微信顶部画面，没有继续点击相机','camera_target_occluded':'相机位置被其他窗口遮挡，没有点击','camera_icon_changed':'点击前相机图标已变化，没有继续点击'}.get(str(error),type(error).__name__)
             return {'outcome':'unknown' if submitted else 'draft','error':reason}
         finally:
             if not submitted:
@@ -37,10 +37,10 @@ class MomentPublisher:
                 except Exception:pass
 
 class WeChatMomentUI:
-    def __init__(self,get_driver,paused,authorized=lambda:True,report=None,clock=time.monotonic,sleep=time.sleep):
+    def __init__(self,get_driver,paused,authorized=lambda:True,report=None,clock=time.monotonic,sleep=time.sleep,camera_probe=None):
         self.get_driver=get_driver;self.paused=paused;self.authorized=authorized;self.report=report or (lambda *args:None)
         self.clock=clock;self.sleep=sleep;self.pid=None;self.main=None;self.composer=None;self.previous_windows=set();self.preparation_error=''
-        self.image_path=None;self.image_hash='';self.image_selected=False
+        self.image_path=None;self.image_hash='';self.image_selected=False;self.camera_probe=camera_probe
     def fail(self,reason):self.preparation_error=reason;self.report('朋友圈入口检查：'+reason);return None
     @staticmethod
     def descendants(root,limit=3500):
@@ -124,6 +124,9 @@ class WeChatMomentUI:
     def feed_roots(self):
         return [n for n in self.nodes(self.own_roots()) if self.cls(n) in ('mmui::SNSContentView','mmui::SNSWindow')]
     def camera_control(self):
+        # Qt can retain stale offscreen flags/rectangles. A successful current-frame
+        # observation is authoritative, including the absence of the toolbar.
+        if self.camera_probe is not None:return self.camera_probe(self.main,self.available,report=self.report)
         feeds=self.feed_roots();roots=feeds or self.own_roots()
         buttons=self.named(roots,('发表朋友圈','发布朋友圈','发布动态','拍照分享','相机','Camera'))
         if len(buttons)==1:return buttons[0]
