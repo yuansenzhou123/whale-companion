@@ -139,7 +139,7 @@ class DeepSeekClient {
     };
   }
 
-  buildPayload({ system, turns = [], stream = false, maxTokens, thinking, maxOutputTokens }) {
+  buildPayload({ system, turns = [], stream = false, maxTokens, thinking, maxOutputTokens, temperature }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
     for (const t of turns) {
@@ -152,7 +152,8 @@ class DeepSeekClient {
       messages,
       stream,
       temperature: (() => {
-        let t = Math.max(0, Math.min(2, Number(this.temperature) || 1.2));
+        const requested=temperature===undefined?Number(this.temperature):Number(temperature);
+        let t = Math.max(0, Math.min(2, Number.isFinite(requested)?requested:1.2));
         // 智谱 GLM 的 temperature 只接受 0~1
         if (this.provider === 'zhipu') t = Math.min(t, 0.99);
         return t;
@@ -282,11 +283,11 @@ class DeepSeekClient {
   }
 
   /** 非流式，返回完整文本 */
-  async complete({ system, turns, maxTokens, thinking, signal, maxOutputTokens, purpose }) {
+  async complete({ system, turns, maxTokens, thinking, signal, maxOutputTokens, purpose, temperature }) {
     let lastErr = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const payload = this.buildPayload({ system, turns, stream: false, maxTokens, thinking, maxOutputTokens });
+        const payload = this.buildPayload({ system, turns, stream: false, maxTokens, thinking, maxOutputTokens, temperature });
         const { res } = await this._open(payload, { stream: false, signal, purpose });
         if (res.statusCode !== 200) throw await this._errorFrom(res);
         const raw = await this._readAll(res);

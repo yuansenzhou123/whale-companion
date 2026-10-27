@@ -125,3 +125,12 @@ test('遗忘联系人或清空所有记忆时，关联长期交代也失效，�
  f.outputs.push(f.compile());await f.agent.handle(f.msg(f.instruction));assert.equal(f.agent.active().length,1);
  assert.equal(f.agent.command(f.msg('清空所有记忆')),null);assert.equal(f.agent.active().length,0);
 });
+
+test('礼貌条件请求在确认过程中遇到另一私聊来信，来信等本轮同步完成再回应',async t=>{
+ const f=fixture(t);f.agent.updateContacts([{id:'wxid_alice',name:'甲'}]);const text='以后甲再发消息，就回复“我这会儿很忙”好吗';
+ let release,entered;const started=new Promise(r=>entered=r);f.outputs.push(()=>{entered();return new Promise(r=>release=r);});
+ const owner=f.agent.handle(f.msg(text));await started;const guest=f.agent.handle(f.msg('你好',{chatId:'wxid_alice',senderId:'wxid_alice'}));
+ await new Promise(r=>setImmediate(r));assert.equal(f.calls.length,1);
+ release(JSON.stringify({action:'remember',target:'甲',quote:text,confidence:.99,mode:'any',exactReply:'我这会儿很忙',duration:'until_cancelled'}));
+ await owner;assert.equal((await guest).text,'我这会儿很忙');assert.equal(f.agent.active()[0].target.id,'wxid_alice');
+});
