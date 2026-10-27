@@ -139,7 +139,7 @@ class DeepSeekClient {
     };
   }
 
-  buildPayload({ system, turns = [], stream = false, maxTokens, thinking }) {
+  buildPayload({ system, turns = [], stream = false, maxTokens, thinking, maxOutputTokens }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
     for (const t of turns) {
@@ -157,7 +157,7 @@ class DeepSeekClient {
         if (this.provider === 'zhipu') t = Math.min(t, 0.99);
         return t;
       })(),
-      max_tokens: Math.min(Number(maxTokens) || this.maxTokens, this.maxTokens),
+      max_tokens: Number.isFinite(maxOutputTokens) ? Math.max(1,Math.min(1200,maxOutputTokens)) : Math.min(Number(maxTokens) || this.maxTokens, this.maxTokens),
     };
     if (thinking === false && this.provider === 'deepseek') payload.thinking = {type: 'disabled'};
     if (this.frequencyPenalty) payload.frequency_penalty = this.frequencyPenalty;
@@ -165,7 +165,7 @@ class DeepSeekClient {
     return payload;
   }
 
-  _open(payload, { signal, stream }) {
+  _open(payload, { signal, stream, purpose = 'chat' }) {
     if (this.isMock) throw new LlmError(FRIENDLY.nokey, { code: 'nokey' });
     let url;
     try {
@@ -224,6 +224,8 @@ class DeepSeekClient {
         const mode = this.config.persona && this.config.persona.promptMode || 'legacy';
         const metadata = {
           mode,
+          purpose,
+          learnedStyleRules: (system.match(/"表达要求":/g)||[]).length,
           systemChars: system.length,
           systemHash: createHash('sha256').update(system).digest('hex').slice(0, 12),
           historyMessages: payload.messages.filter((message) => message.role !== 'system').length,
@@ -280,12 +282,12 @@ class DeepSeekClient {
   }
 
   /** 非流式，返回完整文本 */
-  async complete({ system, turns, maxTokens, thinking }) {
+  async complete({ system, turns, maxTokens, thinking, signal, maxOutputTokens, purpose }) {
     let lastErr = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const payload = this.buildPayload({ system, turns, stream: false, maxTokens, thinking });
-        const { res } = await this._open(payload, { stream: false });
+        const payload = this.buildPayload({ system, turns, stream: false, maxTokens, thinking, maxOutputTokens });
+        const { res } = await this._open(payload, { stream: false, signal, purpose });
         if (res.statusCode !== 200) throw await this._errorFrom(res);
         const raw = await this._readAll(res);
         let json;

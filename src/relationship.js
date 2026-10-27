@@ -193,6 +193,7 @@ class Relationship {
     if(!this.trusted(msg))return null;
     const id=msg.senderId,p=this.profile(id),text=clean(msg.cleanText||msg.text,500);
     if(!p.enabled)return null;
+    if(msg.styleFeedbackHandled)return null;
     const memoryAnswer=this.memory.input(msg);if(memoryAnswer)return memoryAnswer;
     const flowAnswer=this.flow.handle(msg,session);if(flowAnswer)return flowAnswer;
     let match;

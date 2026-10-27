@@ -192,3 +192,8 @@ test('默认与自定义人设都会主动延伸话题，关闭后都停止', ()
     assert.doesNotMatch(persona.buildSystem({ config, msg }), /主动关心与延伸话题/);
   }
 });
+
+test('主动私信沿用当前已学表达偏好，不另外学习或生成虚假用户反馈',async t=>{
+ const f=setup(t),seen=[];f.bot.styleLearning={contextFor:msg=>{seen.push(msg);return '\nSTYLE_PREFERENCE_PROACTIVE_MARKER';}};
+ await f.service.next();assert.equal(seen.length,1);assert.equal(seen[0].senderId,'wxid_owner');assert.equal(seen[0].chatId,'wxid_owner');assert.match(f.calls[0].system,/STYLE_PREFERENCE_PROACTIVE_MARKER/);
+});

@@ -19,6 +19,17 @@ try {
   if(-not (Test-Path -LiteralPath $launcher)) {throw 'WeChat bridge launcher is missing.'}
   if($CheckOnly) {Write-Output '{"status":"ready"}';exit 0}
   New-Item -ItemType Directory -Path (Join-Path $projectDir 'data') -Force | Out-Null
+  # A delayed menu launch cannot undo a newer user stop request.
+  $stopMarker=Join-Path $projectDir 'data\WECHAT_STOPPED'
+  $requestedAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+  $parsedAt=0.0
+  if([double]::TryParse($env:WHALE_BRIDGE_REQUESTED_AT,[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$parsedAt)){$requestedAt=$parsedAt}
+  if(Test-Path -LiteralPath $stopMarker){
+    $stoppedAt=([DateTimeOffset](Get-Item -LiteralPath $stopMarker).LastWriteTimeUtc).ToUnixTimeMilliseconds()/1000.0
+    if($stoppedAt -ge $requestedAt){Write-Output '{"status":"stopped"}';exit 0}
+    Remove-Item -LiteralPath $stopMarker -Force
+  }
+  $env:WHALE_BRIDGE_MENU_START='1'
   # Keep the mutex while the original batch launcher handles bridge crash recovery.
   $child=Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /s /c ""'+$launcher+'""') -WorkingDirectory $projectDir -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $projectDir 'data\wechat-console.stdout.log') -RedirectStandardError (Join-Path $projectDir 'data\wechat-console.stderr.log')
   exit $child.ExitCode

@@ -564,9 +564,16 @@ class Bot {
     }
     // 后面生成的文本要判断「是不是在对主人说话」（例如不许带脏字回骂）
     msg.isMaster = isMaster;
-    if(this.wechatActions){
-      const task=this.wechatActions.handle(msg);
-      if(task)return {action:'command',commandType:'wechat_action',key,msg,atMe,text:task.text,reason:'wechat_action'};
+    if(this.agent){
+      const outcome=await this.agent.handle(msg);
+      if(outcome?.kind==='ignore')return {action:'ignore',key,msg,atMe,reason:outcome.reason};
+      if(outcome)return {action:'command',commandType:outcome.kind==='reply'?'agent_policy_reply':'agent_policy',key,msg,atMe,text:outcome.text,agentPolicyId:outcome.policyId,reason:outcome.kind==='reply'?'agent_policy_reply':'agent_policy'};
+    }
+    if(this.wechatActions){const task=this.wechatActions.handle(msg);if(task)return {action:'command',commandType:'wechat_action',key,msg,atMe,text:task.text,reason:'wechat_action'};}
+    if(this.styleLearning){
+      const answer=this.styleLearning.command(msg);
+      if(answer)return {action:'command',commandType:'style_learning',key,msg,atMe,text:answer,reason:'style_learning'};
+      await this.styleLearning.observe(msg);
     }
     if (this.sharedMemory) {
       try {
@@ -889,8 +896,10 @@ class Bot {
     if (this.companion) system += this.companion.contextFor({...msg, isMaster});
     if (this.relationship) system += this.relationship.contextFor({...msg,isMaster});
     if (this.sharedMemory) system += this.sharedMemory.contextFor({...msg,isMaster});
-    if (this.wechatActions) system += this.wechatActions.contextFor(msg);
-    system += rhythmHint(replyRhythm(this.config, msg));
+    if(this.wechatActions)system+=this.wechatActions.contextFor(msg);
+    if(this.agent)system+=this.agent.contextFor(msg);
+    system += rhythmHint(this.rhythmFor(msg));
+    if(this.styleLearning)system += this.styleLearning.contextFor(msg);
     const turns = this.buildTurns(msg, hasText ? history.slice(0, -1) : history);
 
     // 对喷的台词交给模型自己现编；只有没配 Key 的演示模式才用本地库顶着
@@ -1346,7 +1355,7 @@ class Bot {
       }
       return;
     }
-    if (replyRhythm(this.config, decision.msg)) {
+    if (this.rhythmFor(decision.msg)) {
       if (signal?.aborted) return;
       const draft = await this.llm.complete({system:decision.system, turns:decision.turns});
       if (signal?.aborted) return;
@@ -1360,8 +1369,10 @@ class Bot {
   }
 
   /** Only ordinary short private chat is checked; preserve complete answers on failure. */
+  rhythmFor(msg) {const base=replyRhythm(this.config,msg);return this.styleLearning?this.styleLearning.rhythm(msg,base):base;}
+
   async applyReplyRhythm(decision, text) {
-    const rule = replyRhythm(this.config, decision.msg);
+    const rule = this.rhythmFor(decision.msg);
     if (!needsShorter(text, rule)) return text;
     this.logger && this.logger.info('短闲聊草稿偏长，重写一次：' + Array.from(String(text)).length + '字，目标不超过' + rule.maxChars + '字');
     try {
@@ -1387,6 +1398,11 @@ class Bot {
   /** 写入鲸鲸自己的回复，返回气泡数组 */
   finalize(decision, text, { error = false } = {}) {
     text = String(text == null ? '' : text).trim();
+    if(decision?.commandType==='agent_policy_reply'&&decision.agentPolicyId&&text){
+      decision.finalText=text;
+      this.store.appendMessage(decision.key,{role:'assistant',name:this.config.persona.name,text,ts:this.now().getTime()});
+      return [text];
+    }
     const cute = persona.isCuteStyle(this.config);
     const emojiOff = this.config.persona && this.config.persona.emojiLevel === '关';
     // 可爱风格保留模型自然表达的表情；按完整字符处理组合表情，避免拆坏肤色、旗帜或连接符。

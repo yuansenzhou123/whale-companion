@@ -291,6 +291,9 @@ def configure_crash_log(log_dir, report):
 
 
 def main():
+    if os.path.exists(os.path.join(ROOT,"data","WECHAT_STOPPED")):
+        boot("微信桥接已由桌宠关闭")
+        return 0
     boot("进入 main()")
     # 微信的 Qt accessibility 只在「纯英文路径」下能热激活成功；路径里带中文时，
     # UIA 认不出主窗（ensure_window 超时 37s），之后每次发送都退到 OCR 并报
@@ -1657,7 +1660,7 @@ def main():
         from wechat_action_worker import WeChatActionWorker,send_group_verified,send_group_ui_once
         from moment_publisher import MomentPublisher,WeChatMomentUI
         def action_paused():
-            return (AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen()
+            return (os.path.exists(os.path.join(ROOT,"data","WECHAT_STOPPED")) or AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen()
                     or os.path.exists(os.path.join(ROOT,"data","PAUSED")))
         def action_driver():
             nonlocal gui
@@ -1669,7 +1672,10 @@ def main():
         def publish_action_moment(text):
             if action_paused():return {"outcome":"draft","error":"当前窗口忙碌，保留文案"}
             from wechatauto.moment import MomentDB
-            publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused),lambda:MomentDB(db).get_my_moments(limit=8))
+            def still_authorized():
+                job=action_worker.active_job
+                return bool(job) and action_worker.post('/api/actions/validate',{'id':job['id'],'lease':job['lease']}).get('valid') is True
+            publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused,still_authorized),lambda:MomentDB(db).get_my_moments(limit=8))
             with send_lock:
                 return with_window_on_top(lambda:publisher.publish(text))
         def action_send(text,name,username):
@@ -1687,14 +1693,27 @@ def main():
             display_name=display_name,log=log,dry_run=os.environ.get("WHALE_ACTION_DRY_RUN")=="1")
         threading.Thread(target=action_worker.run,daemon=True).start()
         log("v3 私聊动作通道已启动（群聊代发；朋友圈实验发表）")
+    def agent_contact_sync():
+        while True:
+            try:
+                contacts=[{"id":uid,"name":name} for uid,name in db.nickname_map(refresh=True).items() if isinstance(uid,str) and not uid.endswith("@chatroom")]
+                response=requests.post(bot_url.rsplit("/webhook",1)[0]+"/api/agent/contacts",json={"contacts":contacts},headers={"X-Bot-Token":token},timeout=10)
+                response.raise_for_status()
+            except Exception as error:log("Agent 联系人同步本轮未完成：",type(error).__name__)
+            time.sleep(300)
+    if (cfg.get("agent") or {}).get("enabled"):
+        threading.Thread(target=agent_contact_sync,daemon=True).start()
     log("已启动。鲸鲸地址：", bot_url)
 
     try:
         while True:
             time.sleep(1)
+            if os.path.exists(os.path.join(ROOT,"data","WECHAT_STOPPED")):
+                log("桌宠已关闭微信桥接")
+                break
     except KeyboardInterrupt:
         log("正在退出…")
-        listener.stop()
+    listener.stop()
     RECEIVE_HEALTH.close()
     return 0
 

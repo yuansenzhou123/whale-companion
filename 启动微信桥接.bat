@@ -23,6 +23,9 @@ set "http_proxy="
 set "https_proxy="
 set "all_proxy="
 
+rem Explicit manual launch re-enables only this project bridge.
+if not defined WHALE_BRIDGE_MENU_START if exist "data\WECHAT_STOPPED" del /q "data\WECHAT_STOPPED" >nul 2>&1
+
 rem 手动启动 = 明确要跑，清掉「一键终止」留下的暂停标记
 if exist "data\PAUSED" del /q "data\PAUSED" >nul 2>&1
 
@@ -42,6 +45,7 @@ echo.
 set "CRASH_RETRIES=0"
 :run_bridge
 if exist "data\PAUSED" goto bridge_paused
+if exist "data\WECHAT_STOPPED" goto bridge_paused
 "%PY%" -u "%~dp0examples\wechatauto_bridge.py"
 set "CODE=%ERRORLEVEL%"
 echo.
@@ -56,6 +60,7 @@ exit /b %CODE%
 
 :bridge_crashed
 if exist "data\PAUSED" goto bridge_paused
+if exist "data\WECHAT_STOPPED" goto bridge_paused
 if %CRASH_RETRIES% GEQ 3 (
   echo Automatic recovery limit reached. Please check the crash log.
   pause >nul

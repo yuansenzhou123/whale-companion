@@ -72,6 +72,9 @@ class PetTests(unittest.TestCase):
         pet.hwnd = 123
         pet.visible = True
         pet.endpoint = 'http://127.0.0.1:8787'
+        pet.bridge_controller=Mock()
+        pet.bridge_controller.status.return_value={'running':False}
+        pet.bridge_busy=False
         pet.backend = Mock(state={'settings':{'enabled':True,'automaticComments':True}})
         return pet
 
@@ -94,9 +97,9 @@ class PetTests(unittest.TestCase):
             pet.menu()
             opened.assert_called_once_with('http://127.0.0.1:8787/debug#cfg_share')
         pet=self.make_menu(9)
-        with patch.object(pet,'request_bridge_start') as request:
+        with patch.object(pet,'request_bridge_toggle') as request:
             pet.menu()
-            request.assert_called_once_with()
+            request.assert_called_once_with(True)
         pet.backend.post.assert_not_called()
 
     def test_bridge_notice_distinguishes_existing_process_and_start_request(self):
@@ -132,6 +135,30 @@ class PetTests(unittest.TestCase):
              patch.object(win32gui,'GetForegroundWindow',return_value=123):
             pet.menu()
         pet.backend.post.assert_not_called()
+
+    def test_bridge_menu_checkmark_tracks_real_state_and_click_sets_requested_state(self):
+        import win32con
+        for running in (False,True):
+            pet=self.make_menu(9);pet.bridge_controller.status.return_value={'running':running}
+            with patch.object(pet,'request_bridge_toggle') as request:pet.menu()
+            row=next(call.args for call in pet.gui.AppendMenu.call_args_list if call.args[2]==9)
+            self.assertEqual(bool(row[1]&win32con.MF_CHECKED),running)
+            self.assertEqual(row[3],'微信桥接');request.assert_called_once_with(not running)
+
+    def test_bridge_busy_is_disabled_and_repeated_click_does_not_spawn_more_work(self):
+        import win32con
+        pet=self.make_menu(0);pet.bridge_busy=True;pet.menu()
+        row=next(call.args for call in pet.gui.AppendMenu.call_args_list if call.args[2]==9)
+        self.assertTrue(row[1]&win32con.MF_GRAYED)
+        with patch('live2d_pet.threading.Thread') as thread:pet.request_bridge_toggle(False)
+        thread.assert_not_called()
+
+    def test_turning_bridge_off_uses_controller_and_keeps_pet_backend_running(self):
+        pet=self.make_menu(0)
+        with patch('live2d_pet.threading.Thread') as thread,patch('live2d_pet.request_wechat_bridge') as start:
+            pet.request_bridge_toggle(False);self.assertTrue(pet.bridge_busy)
+            thread.call_args.kwargs['target']()
+        pet.bridge_controller.stop.assert_called_once_with();start.assert_not_called();pet.backend.post.assert_not_called();self.assertFalse(pet.bridge_busy)
 
     def test_expression_preview_is_local_and_does_not_send_messages(self):
         catalog = VisualCatalog(DEFAULT_MODEL)

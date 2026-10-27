@@ -3,5 +3,12 @@
   "baseline": "v2",
   "backup": "E:\\whale-girl-backups\\v2-20261026-203953",
   "status": "experimental",
-  "port": 8788
+  "port": 8788,
+  "agent": true,
+  "baselineSourceCommit": "57ce1a0",
+  "autonomousMoments": {
+    "startHour": 10,
+    "endHour": 22,
+    "dailyLimit": 1
+  }
 }

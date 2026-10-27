@@ -133,6 +133,7 @@ class ProactiveChat {
         + '\n- 不编造主人今天做过的事、约定、见闻或实时新闻。没有合适的上下文就轻轻问候，不强行装熟或硬塞鲸鱼口癖。'
         + '\n- 避开最近已经说过的开场和问题，不继续争吵，也不要逐字重复历史。只输出准备发送的正文。';
       if (this.relationship) system += this.relationship.contextFor(msg);
+      if (this.bot.styleLearning) system += this.bot.styleLearning.contextFor(msg);
       if (this.bot.sharedMemory) system += this.bot.sharedMemory.contextFor({...msg,text:relationshipReason?.text||''});
       if (relationshipReason) system += '\n【本次主动开口的具体由头】'+relationshipReason.text;
       if (watchFollowup && !relationshipReason) system += watchFollowup.context + '\n这次优先从实际共同看过的一个细节自然开口，不做视频总结，不假装主人又发了新消息。';

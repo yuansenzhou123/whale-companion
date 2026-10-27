@@ -14,6 +14,7 @@ import webbrowser
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bridge_control import BridgeController
 DATA = ROOT/'data'
 WIDTH, BODY_HEIGHT, HEADER = 400, 440, 160
 HEIGHT = BODY_HEIGHT + HEADER
@@ -57,7 +58,7 @@ def launch_wechat_bridge(root=ROOT):
     log = Path(root)/'data/wechat-menu-launch.log'
     log.parent.mkdir(parents=True,exist_ok=True)
     with log.open('ab') as output:
-        return subprocess.Popen([str(powershell),'-NoProfile','-ExecutionPolicy','Bypass','-File',str(helper)],cwd=str(root),stdin=subprocess.DEVNULL,stdout=output,stderr=output,creationflags=subprocess.CREATE_NO_WINDOW)
+        return subprocess.Popen([str(powershell),'-NoProfile','-ExecutionPolicy','Bypass','-File',str(helper)],cwd=str(root),stdin=subprocess.DEVNULL,stdout=output,stderr=output,creationflags=subprocess.CREATE_NO_WINDOW,env={**os.environ,'WHALE_BRIDGE_REQUESTED_AT':str(time.time())})
 
 
 def request_wechat_bridge(root=ROOT):
@@ -194,6 +195,8 @@ class Pet:
         self.controls = self.renderer.controls
         self.last_frame_at = time.monotonic()
         self.backend = Backend(endpoint)
+        self.bridge_controller = BridgeController(ROOT)
+        self.bridge_busy = False
         self.endpoint = endpoint
         self.running, self.visible = True, True
         self.drag = None
@@ -309,7 +312,11 @@ class Pet:
                 command_id += 1
             g.AppendMenu(menu,c.MF_POPUP,submenu,title)
         g.AppendMenu(menu,c.MF_SEPARATOR,0,'')
-        g.AppendMenu(menu,c.MF_STRING,9,'启动微信桥接')
+        bridge_running=self.bridge_controller.status()['running']
+        bridge_busy=getattr(self,'bridge_busy',False)
+        bridge_flags=c.MF_STRING | (c.MF_CHECKED if bridge_running else 0) | (c.MF_GRAYED if bridge_busy else 0)
+        g.AppendMenu(menu,bridge_flags,9,'微信桥接（处理中…）' if bridge_busy else '微信桥接')
+        g.AppendMenu(menu,c.MF_STRING,12,'自主任务')
         g.AppendMenu(menu,c.MF_STRING,10,'人设设置')
         g.AppendMenu(menu,c.MF_STRING,11,'视频分享白名单')
         g.AppendMenu(menu,c.MF_STRING,8,'相处与约会')
@@ -333,7 +340,9 @@ class Pet:
             elif selected == 7:
                 self.set_capture_allowed(not self.controls.allow_capture)
             elif selected == 9:
-                self.request_bridge_start()
+                self.request_bridge_toggle(not bridge_running)
+            elif selected == 12:
+                webbrowser.open(self.endpoint+'/agent.html')
             elif selected == 11:
                 webbrowser.open(self.endpoint+'/debug#cfg_share')
             elif selected == 10:
@@ -354,15 +363,25 @@ class Pet:
                 try: g.SetForegroundWindow(previous)
                 except Exception: pass
 
-    def request_bridge_start(self):
-        self.menu_notice=('我看看微信桥接有没有打开～',time.time()+10)
+    def request_bridge_toggle(self,enabled):
+        if self.bridge_busy:return
+        self.bridge_busy=True
+        self.menu_notice=('我去打开微信桥接～' if enabled else '我先把微信桥接关掉～',time.time()+10)
         def work():
             try:
-                text=request_wechat_bridge()
+                if enabled:text=request_wechat_bridge()
+                else:
+                    self.bridge_controller.stop()
+                    text='微信桥接关好啦，桌宠还在这里～'
             except Exception:
-                text='桥接启动检查失败了，看看 data/wechat-menu-launch.log 呀'
+                text='微信桥接没能'+('打开' if enabled else '关闭')+'，请再试一次呀'
+            finally:
+                self.bridge_busy=False
             self.menu_notice=(text,time.time()+8)
         threading.Thread(target=work,daemon=True).start()
+
+    def request_bridge_start(self):
+        self.request_bridge_toggle(True)
 
     def set_capture_allowed(self, allowed):
         apply_capture_policy(self.hwnd,allowed)
@@ -423,7 +442,7 @@ class Pet:
                     frames += 1
                 if time.monotonic()-last_report >= 5:
                     elapsed = time.monotonic()-last_report
-                    report = {'pid':os.getpid(),'renderer':'live2d-py','model':'live2D/DS鼠控版.zip','loaded':True,'emotion':self.renderer.emotion,'expressions':len(self.renderer.available_expressions),'motions':len(self.renderer.catalog.motions),'enabledOptions':sorted(self.controls.enabled),'manualFace':self.controls.manual_face,'action':self.renderer.action['id'] if self.renderer.action else None,'visible':self.visible,'instanceProtocol':1,'allowCapture':self.controls.allow_capture,'bubbleStyle':'soft-rounded','fps':round(frames/elapsed,1),'time':time.time()}
+                    report = {'pid':os.getpid(),'renderer':'live2d-py','model':'live2D/DS鼠控版.zip','loaded':True,'emotion':self.renderer.emotion,'expressions':len(self.renderer.available_expressions),'motions':len(self.renderer.catalog.motions),'enabledOptions':sorted(self.controls.enabled),'manualFace':self.controls.manual_face,'action':self.renderer.action['id'] if self.renderer.action else None,'visible':self.visible,'instanceProtocol':1,'allowCapture':self.controls.allow_capture,'bubbleStyle':'soft-rounded','bridgeToggle':True,'fps':round(frames/elapsed,1),'time':time.time()}
                     tmp = DATA/'live2d-pet-status.json.tmp'
                     tmp.write_text(json.dumps(report,ensure_ascii=False),encoding='utf-8')
                     tmp.replace(DATA/'live2d-pet-status.json')

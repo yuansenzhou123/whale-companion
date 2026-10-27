@@ -176,7 +176,7 @@ class Store {
     if (message.msgId) entry.msgId = String(message.msgId).slice(0, 120);
     if (message.error) entry.error = true;
     if (message.proactive) entry.proactive = true;
-    if (message.sent === true) entry.sent = true;
+    if(message.sent===true)entry.sent=true;
     sess.messages.push(entry);
     if (sess.messages.length > this.limits.maxMessages) {
       sess.messages.splice(0, sess.messages.length - this.limits.maxMessages);

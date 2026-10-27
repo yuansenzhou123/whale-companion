@@ -2,7 +2,7 @@ import hashlib,os,sys,unittest
 from types import SimpleNamespace
 sys.path.insert(0,os.path.join(os.getcwd(),'examples'))
 from wechat_action_worker import WeChatActionWorker,send_group_verified,send_group_ui_once
-from moment_publisher import MomentPublisher
+from moment_publisher import MomentPublisher,WeChatMomentUI
 
 
 class WorkerTests(unittest.TestCase):
@@ -77,5 +77,10 @@ class GroupTargetTests(unittest.TestCase):
         posts=lambda:[{'id':'new' if state['submitted'] else 'old','tid':'wxid_self','text':'BODY'}]
         publisher=MomentPublisher(ui,posts,clock=lambda:state['time'],sleep=lambda n:state.update(time=state['time']+n))
         self.assertEqual(publisher.publish('BODY')['outcome'],'sent')
+
+class AuthorizationTests(unittest.TestCase):
+    def test_revoked_lease_prevents_any_ui_step(self):
+        ui=WeChatMomentUI(lambda:None,lambda:False,lambda:False)
+        with self.assertRaisesRegex(RuntimeError,'action_authorization_changed'):ui.available()
 
 if __name__=='__main__':unittest.main()

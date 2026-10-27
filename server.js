@@ -32,7 +32,10 @@ const {WatchCompanion} = require('./src/watchCompanion');
 const {companionRoute} = require('./src/companionRoutes');
 const {Relationship} = require('./src/relationship');
 const {SharedMemory} = require('./src/sharedMemory');
-const {WeChatActions} = require('./src/wechatActions');
+const {StyleLearning} = require('./src/styleLearning');
+const {WeChatActions}=require('./src/wechatActions');
+const {CompanionAgent}=require('./src/agent');
+const {AutonomousMoments}=require('./src/autonomousMoments');
 const {preservePrompt}=require('./src/fullPersona');
 const {normalizeWhitelist,shareAllowed}=require('./src/sharePolicy');
 
@@ -134,8 +137,14 @@ function createRuntime({ root = projectRoot(), env = process.env, loggerLevel } 
   bot.companion = runtime.companion;
   runtime.sharedMemory = new SharedMemory({config,store,relationship:runtime.relationship,logger});
   bot.sharedMemory = runtime.sharedMemory;
-  runtime.actions = new WeChatActions({config,store,dryRun:env.WHALE_ACTION_DRY_RUN==='1'});
-  bot.wechatActions = runtime.actions;
+  runtime.styleLearning = new StyleLearning({config,store,llm,logger});
+  bot.styleLearning = runtime.styleLearning;
+  runtime.actions=new WeChatActions({config,store,dryRun:env.WHALE_ACTION_DRY_RUN==='1'});
+  bot.wechatActions=runtime.actions;
+  runtime.agent=new CompanionAgent({config,store,llm,actions:runtime.actions,sharedMemory:runtime.sharedMemory,companion:runtime.companion,styleLearning:runtime.styleLearning,logger});
+  bot.agent=runtime.agent;
+  runtime.autonomy=new AutonomousMoments({agent:runtime.agent,config,store,actions:runtime.actions,sharedMemory:runtime.sharedMemory,companion:runtime.companion,styleLearning:runtime.styleLearning});
+  runtime.companion.styleLearning = runtime.styleLearning;
   store.onMessage = (session,entry) => runtime.sharedMemory.recordEntry(session,entry);
   runtime.proactiveChat = new ProactiveChat({ config, store, bot, llm, companion: runtime.companion, relationship: runtime.relationship });
   watchConfigFile(runtime);
@@ -648,6 +657,7 @@ async function debugPrompt(runtime, body) {
     now: new Date(),
   });
   if (runtime.sharedMemory) system += runtime.sharedMemory.contextFor({platform:'wechat',chatType,chatId:chatType==='group'?String(body.chatId||''):senderId,senderId,senderName,chatTitle,isMaster,text,cleanText:text});
+  if(runtime.styleLearning) system += runtime.styleLearning.contextFor({platform:'wechat',chatType,chatId:chatType==='group'?String(body.chatId||''):senderId,senderId,senderName,isMaster,text,cleanText:text});
   return {
     ok: true,
     isMaster,
@@ -920,7 +930,12 @@ function createHandler(runtime) {
     const method = req.method || 'GET';
 
     try {
-      if (pathname.startsWith('/api/actions/')) {
+      if(pathname==='/api/agent/contacts'&&method==='POST'){
+        const body=await readBody(req),gateway=gateways.get('wechat');
+        if(!gateway||!String(gateway.options.inboundToken||'').trim()||!gateway.verifyToken(req,body))return json(res,403,{ok:false,error:'token 不对'});
+        return json(res,200,runtime.agent.updateContacts(body.contacts));
+      }
+      if(pathname.startsWith('/api/actions/')){
         if(pathname==='/api/actions/status'&&method==='GET')return json(res,200,runtime.actions.view());
         if(method!=='POST')return json(res,405,{ok:false,error:'method not allowed'});
         const body=await readBody(req),gateway=gateways.get('wechat');
@@ -931,7 +946,7 @@ function createHandler(runtime) {
         return json(res,404,{ok:false,error:'not found'});
       }
       if (pathname.startsWith('/api/companion/')) return await companionRoute(runtime, req, res, url, {json, readBody});
-      if (pathname === '/healthz') return json(res, 200, { ok: true, up: true, line: fs.existsSync(path.join(runtime.config.root,'VERSION-LINE.json'))?JSON.parse(fs.readFileSync(path.join(runtime.config.root,'VERSION-LINE.json'),'utf8')).line:'v2', root:runtime.config.root, actionDryRun:runtime.actions.dryRun });
+      if (pathname === '/healthz') return json(res,200,{ok:true,up:true,line:'v3',root:runtime.config.root,actionDryRun:runtime.actions.dryRun,agentEnabled:runtime.agent.enabled()});
       if (pathname === '/api/memory/status' && method === 'GET') return json(res,200,{ok:true,...runtime.sharedMemory.status()});
 
       if (pathname === '/api/status' && method === 'GET') {
@@ -991,6 +1006,7 @@ function createHandler(runtime) {
       }
 
       if (pathname === '/api/digest' && method === 'GET') {
+        if(Number(runtime.config.wechat?.digestMinutes)<=0)return json(res,200,{ok:true,count:0,text:'',disabled:true});
         const q = new URL(req.url, 'http://localhost');
         const since = Number(q.searchParams.get('since') || 0);
         const items = runtime.store.listDigest(since).slice(-120);
@@ -1125,6 +1141,7 @@ function createHandler(runtime) {
       }
 
       if (pathname === '/api/digest' && method === 'GET') {
+        if(Number(runtime.config.wechat?.digestMinutes)<=0)return json(res,200,{ok:true,count:0,text:'',disabled:true});
         const q = new URL(req.url, 'http://localhost');
         const since = Number(q.searchParams.get('since') || 0);
         const items = runtime.store.listDigest(since).slice(-120);
@@ -1227,6 +1244,7 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     server.listen(listenPort, listenHost, resolve);
   });
   const actualPort = server.address().port;
+  runtime.autonomy.start();
   const url = `http://${listenHost === '0.0.0.0' ? '127.0.0.1' : listenHost}:${actualPort}`;
 
   let closed = false;
@@ -1244,6 +1262,9 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
   };
   server.on('close', () => {
     runtime.closeConfigWatcher?.();
+    runtime.autonomy.close();
+    runtime.agent.close();
+    runtime.styleLearning.close();
     runtime.relationship.memory.close();
     runtime.companion.close();
     runtime.store.close();

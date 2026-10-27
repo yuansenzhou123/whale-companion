@@ -35,7 +35,7 @@ class WeChatActionWorker:
     def __init__(self,base_url,token,http,send,publish_moment,paused,display_name,log,dry_run=False):
         self.base_url=base_url.rstrip('/');self.headers={'X-Bot-Token':token}
         self.http=http;self.send=send;self.publish_moment=publish_moment;self.paused=paused
-        self.display_name=display_name;self.log=log;self.dry_run=dry_run;self.pending_ack=None
+        self.display_name=display_name;self.log=log;self.dry_run=dry_run;self.pending_ack=None;self.active_job=None
     def post(self,endpoint,body):
         response=self.http.post(self.base_url+endpoint,json=body,headers=self.headers,timeout=30)
         response.raise_for_status();return response.json()
@@ -75,10 +75,12 @@ class WeChatActionWorker:
                     if not ok:ack['error']='微信发送结果未确认'
                 except Exception as error:ack.update(outcome='unknown',error=type(error).__name__)
         elif job.get('kind')=='moment_text':
+            self.active_job=job
             try:
                 answer=self.publish_moment(text) or {}
                 ack['outcome']=answer.get('outcome','unknown');ack['error']=str(answer.get('error') or '')[:240]
             except Exception as error:ack.update(outcome='unknown',error=type(error).__name__)
+            finally:self.active_job=None
         else:ack['error']='未支持的任务类型'
         self.acknowledge();return True
     def run(self):

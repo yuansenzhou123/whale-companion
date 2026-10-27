@@ -24,6 +24,13 @@ async function companionRoute(runtime, req, res, url, {json, readBody}) {
   const a = Buffer.from(value); const b = Buffer.from(service.token);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return json(res, 403, {ok: false, error: '请重新连接陪看服务'});
   runtime.relationship?.tick();
+  if(route==='agent'&&req.method==='GET')return json(res,200,{...runtime.agent.view(),autonomy:runtime.autonomy.view(),dryRun:runtime.actions.dryRun});
+  if(route==='style'&&req.method==='GET'){
+    const owners=runtime.relationship.ownerIds().map(id=>({id,name:runtime.companion.ownerChoices().find(x=>x.id===id)?.name||'已认证主人'}));
+    const id=url.searchParams.get('ownerId');
+    if(!id)return json(res,200,{ok:true,owners});
+    try{return json(res,200,runtime.styleLearning.view(runtime.relationship.owner(id)));}catch(error){return json(res,400,{ok:false,error:error.message});}
+  }
   if (req.method === 'GET' && route === 'relationship') {
     const ids=runtime.relationship.ownerIds();
     const ownerId=url.searchParams.get('ownerId') || (ids.length===1?ids[0]:'');
@@ -35,6 +42,21 @@ async function companionRoute(runtime, req, res, url, {json, readBody}) {
     const body = await readBody(req);
     try {
       const relation=runtime.relationship;
+      if(route.startsWith('agent/')){
+        if(route==='agent/pause'){if(typeof body.paused!=='boolean')throw Error('暂停状态无效');runtime.agent.state.paused=body.paused;runtime.agent.event(body.paused?'paused':'resumed');}
+        else if(route==='agent/moments'){if(typeof body.enabled!=='boolean')throw Error('朋友圈开关无效');runtime.agent.state.momentsEnabled=body.enabled;runtime.agent.state.momentsPausedUntil=0;runtime.agent.event('moments_settings');}
+        else if(route==='agent/revoke')runtime.agent.revoke(String(body.id||''));
+        else return json(res,404,{ok:false,error:'没有这个自主任务操作'});
+        return json(res,200,{...runtime.agent.view(),autonomy:runtime.autonomy.view(),dryRun:runtime.actions.dryRun});
+      }
+      if(route.startsWith('style/')){
+        const id=relation.owner(body.ownerId),learning=runtime.styleLearning;
+        if(route==='style/settings'){if(typeof body.enabled!=='boolean')throw Error('学习开关必须是布尔值');return json(res,200,learning.setEnabled(id,body.enabled));}
+        if(route==='style/remove')return json(res,200,learning.revoke(id,[String(body.id||'')]));
+        if(route==='style/clear')return json(res,200,learning.clear(id));
+        if(route==='style/undo'){learning.undo(id);return json(res,200,learning.view(id));}
+        return json(res,404,{ok:false,error:'没有这个学习操作'});
+      }
       if (route.startsWith('relationship/')) {
         const id=relation.owner(body.ownerId);
         let result;

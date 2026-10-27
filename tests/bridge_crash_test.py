@@ -60,6 +60,10 @@ if "%TEST_SCENARIO%"=="fatal" exit /b -1073741819
 if "%TEST_SCENARIO%"=="watchdog" exit /b 2
 if "%TEST_SCENARIO%"=="interrupt" exit /b -1073741510
 if "%TEST_SCENARIO%"=="recover" if %TEST_RUNS% EQU 1 exit /b -1073741819
+if "%TEST_SCENARIO%"=="bridge_stopped" (
+  type nul >data\\WECHAT_STOPPED
+  exit /b 2
+)
 if "%TEST_SCENARIO%"=="paused" (
   type nul >data\\PAUSED
   exit /b 2
@@ -96,6 +100,10 @@ exit /b 0
         code, count, _ = self.run_scenario('interrupt')
         self.assertNotEqual(code, 0)
         self.assertEqual(count, 1)
+
+    def test_bridge_only_stop_marker_blocks_crash_recovery(self):
+        code,count,output=self.run_scenario('bridge_stopped')
+        self.assertEqual((code,count),(0,1));self.assertIn('Automatic recovery stopped',output)
 
     def test_pause_marker_prevents_restart(self):
         code, count, output = self.run_scenario('paused')

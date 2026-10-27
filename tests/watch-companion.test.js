@@ -161,3 +161,9 @@ test('自动截取客户端时，没有播放画面便不拿推荐页或按钮�
   assert.equal(f.service.memories[0].observations.length, 0);
   assert.match(f.service.lastError, /未见播放画面/);
 });
+
+test('桌宠短评沿用主人的表达偏好，输出JSON与画面证据要求仍保留',async t=>{
+ const f=fixture(t),seen=[];f.service.styleLearning={contextFor:msg=>{seen.push(msg);return '\nSTYLE_PREFERENCE_DESKTOP_MARKER';}};
+ f.service.ingest(f.event({caption:'猫咪的动作'}));await f.service.work;
+ assert.equal(seen[0].senderId,'wxid_owner');assert.equal(seen[0].chatId,'wxid_owner');assert.match(f.calls[0].system,/STYLE_PREFERENCE_DESKTOP_MARKER/);assert.match(f.calls[0].system,/只输出 JSON/);assert.equal(f.service.state().expression,'happy');
+});

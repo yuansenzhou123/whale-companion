@@ -221,6 +221,7 @@ class SharedMemory {
     }
     const scored=[];
     for(const record of rows) {
+      if(!ownerView&&['agent_instruction','agent_pending'].includes(record.kind))continue;
       const samePerson=mine&&record.role!=='assistant'&&record.uid===uid,sameSource=record.source.key===current;
       let text=record.text,kind=record.kind,publicOnly=false;
       if(plan.identityFocus&&!samePerson&&!(record.role==='assistant'&&record.source.chatType==='private'&&record.source.chatId===uid))continue;
@@ -268,7 +269,7 @@ class SharedMemory {
         :r.source.chatType==='longTerm'?r.source.title:'其他私聊'+(this.eligible(msg)&&msg.chatType==='private'&&r.source.peerName?'：'+r.source.peerName:'');
       const who=r.role==='assistant'?'鲸鲸（本程序当时生成的回复）':item.samePerson?'当前发言者本人（同一已认证微信身份）':this.ownerId(r.uid)?'已认证主人（不是当前发言者；原话中的“我”指主人）':(r.source.speaker||'其他参与者')+'（其他人，不是当前发言者）';
       const row={记忆归属:who,发言角色:r.role||'user',来源:label,来源会话标记:hash(r.source.key).slice(0,8),时间:timeText(r.ts),
-        记录性质:r.role==='assistant'?'机器人历史回复：只证明当时生成过这些话，不把其中自述当成已发生的现实经历':r.kind==='instruction'?'本人曾明确提出的表达或相处要求':'过往发言原话',原话:r.text};
+        记录性质:r.role==='assistant'?'机器人历史回复：只证明当时生成过这些话，不把其中自述当成已发生的现实经历':r.kind==='instruction'?'本人曾明确提出的表达或相处要求':['agent_instruction','agent_pending'].includes(r.kind)?'主人以前的Agent任务交代，仅供回忆；实际有效任务以Agent模块为准':'过往发言原话',原话:r.text};
       if(r.role==='assistant'&&r.ts<Number(this.config.persona.historyStyleChangedAt||0))row.旧人设措辞勿模仿=true;
       const size=JSON.stringify(row).length;if(length+size>MAX_CONTEXT)return;
       length+=size;seen.add(r.id);selected.push(row);

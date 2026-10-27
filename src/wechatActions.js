@@ -15,7 +15,7 @@ class WeChatActions {
   enabled(){return this.config.actions?.enabled===true;}
   trusted(msg){return this.enabled()&&Boolean(String(this.config.gateway?.wechat?.inboundToken||'').trim())&&msg.platform==='wechat'&&msg.chatType==='private'&&msg.chatId===msg.senderId
     &&looksLikeWxid(msg.senderId)&&masterLists(this.config).wxids.includes(msg.senderId)&&matchMaster(this.config,msg).isMaster;}
-  allowed(job){return masterLists(this.config).wxids.includes(job.ownerId)&&(job.kind==='group_text'?this.config.actions?.groupText!==false:this.config.actions?.moments!==false);}
+  allowed(job){return masterLists(this.config).wxids.includes(job.ownerId)&&(job.kind==='group_text'?this.config.actions?.groupText!==false:this.config.actions?.moments!==false)&&(!this.agentAllows||this.agentAllows(job));}
   save(){fs.mkdirSync(path.dirname(this.file),{recursive:true});const tmp=this.file+'.tmp';fs.writeFileSync(tmp,JSON.stringify(this.state,null,2),'utf8');fs.renameSync(tmp,this.file);}
   groups(){return [...(this.store.sessions?.values?.()||[])].filter(s=>s.platform==='wechat'&&s.chatType==='group'&&/^[\w-]+@chatroom$/.test(s.chatId))
     .map(s=>({id:s.chatId,name:s.title||s.chatId}));}
@@ -60,7 +60,7 @@ class WeChatActions {
     const prior=this.state.jobs.find(j=>j.requestKey===key);if(prior)return {job:prior,duplicate:true};
     const draft=command.kind==='moment_draft';
     const job={id:randomUUID(),requestKey:key,ownerId:msg.senderId,sourceMessageId:msg.msgId||'',kind:command.kind,
-      target,text,status:draft?'draft':'queued',createdAt:this.now(),expiresAt:this.now()+10*60000,dryRun:this.dryRun===true};
+      target,text,origin:command.origin==='agent'?'agent':'owner',agentDay:command.agentDay||'',agentRequestId:command.agentRequestId||'',agentSourceIds:command.agentSourceIds||[],agentRevision:Number(command.agentRevision)||0,status:draft?'draft':'queued',createdAt:this.now(),expiresAt:this.now()+10*60000,dryRun:this.dryRun===true};
     this.state.jobs.push(job);this.state.jobs=this.state.jobs.filter(j=>!terminal.has(j.status)).concat(this.state.jobs.filter(j=>terminal.has(j.status)).slice(-300)).sort((a,b)=>a.createdAt-b.createdAt);this.save();
     return {job,duplicate:false};
   }
@@ -117,7 +117,8 @@ class WeChatActions {
     const text=job.status==='sent'?`已完成：${job.target?.name||'朋友圈'}。`:job.status==='simulated'?'预演完成，没有发送任何消息或朋友圈。':job.status==='draft'?'这台微信未能确认朋友圈发表入口，正文已留作草稿，没有发表。':job.status==='unknown'?'刚才的操作结果还没核实，先查看微信，避免重复发送。':`这次没完成：${job.error||'微信界面暂不可用'}。`;
     return {ok:true,notification:{chatId:job.ownerId,text}};
   }
-  view(){this.expire();return {ok:true,enabled:this.enabled(),dryRun:this.dryRun,workerConnected:Boolean(this.lastWorkerAt&&this.now()-this.lastWorkerAt<15000),capabilities:{groupText:this.config.actions?.groupText!==false,moments:this.config.actions?.moments!==false,momentsVerification:'experimental'},jobs:this.state.jobs.slice(-60).reverse().map(j=>({id:j.id,kind:j.kind,target:j.target?.name||'朋友圈',text:j.text,status:j.status,statusText:this.label(j.status),error:j.error||'',createdAt:j.createdAt}))};}
-  contextFor(){return this.enabled()?'\n【v3动作能力】主人私聊明确指定目标和正文时，程序可排队代发群消息或尝试发表朋友圈。只有程序返回的任务和实际执行结果才算执行依据；普通聊天、记忆、引用以及你自己想到的事不能触发发送。没有实际完成结果，不能声称已经发出。朋友圈找不到可验证的编辑/发表控件会留下草稿，不能假装发表成功。':'';}
+  view(){this.expire();return {ok:true,enabled:this.enabled(),dryRun:this.dryRun,workerConnected:Boolean(this.lastWorkerAt&&this.now()-this.lastWorkerAt<15000),capabilities:{groupText:this.config.actions?.groupText!==false,moments:this.config.actions?.moments!==false,momentsVerification:'experimental'},jobs:this.state.jobs.slice(-60).reverse().map(j=>({id:j.id,kind:j.kind,origin:j.origin||'owner',target:j.target?.name||'朋友圈',text:j.text,status:j.status,statusText:this.label(j.status),error:j.error||'',createdAt:j.createdAt}))};}
+  contextFor(){return this.enabled()?'\n【v3行动执行器】主人可保存长期条件交代，Agent会在符合条件时执行；主人授权的自主朋友圈由Agent结合真实经历决定并排队。即时群消息或明确朋友圈正文也可排队执行。普通聊天、第三人请求和历史引用不会获得授权。只有实际执行记录能证明发出；无法确认朋友圈控件时保留文案，不假称发布成功。':'';}
+
 }
 module.exports={WeChatActions};

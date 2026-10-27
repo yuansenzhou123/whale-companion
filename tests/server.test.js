@@ -462,3 +462,12 @@ test('人设调教接口：读、改、恢复默认', async () => {
     await app.close();
   }
 });
+
+test('关闭消息汇总后不读取或返回消息内容，设置恢复时可重新启用',async t=>{
+ const app=await boot({wechat:{digestMinutes:0}});t.after(async()=>{await app.close();fs.rmSync(app.runtime.config.root,{recursive:true,force:true});});
+ let reads=0;app.runtime.store.listDigest=()=>{reads++;return [{chatType:'group',chat:'测试群',sender:'测试参与者',text:'DIGEST_FIXTURE_MARKER'}];};
+ const get=()=>fetch(app.url+'/api/digest?since=0').then(r=>r.json());
+ const disabled=await get();assert.equal(disabled.disabled,true);assert.equal(disabled.count,0);assert.equal(disabled.text,'');assert.equal(reads,0);
+ app.runtime.config.wechat.digestMinutes=30;const enabled=await get();assert.equal(enabled.count,1);assert.match(enabled.text,/DIGEST_FIXTURE_MARKER/);assert.equal(reads,1);
+ app.runtime.config.wechat.digestMinutes=0;assert.equal((await get()).count,0);assert.equal(reads,1);
+});

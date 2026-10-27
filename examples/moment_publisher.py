@@ -43,7 +43,7 @@ class MomentPublisher:
 
 
 class WeChatMomentUI:
-    def __init__(self,get_driver,paused):self.get_driver=get_driver;self.paused=paused;self.pid=None;self.composer=None;self.previous_windows=set()
+    def __init__(self,get_driver,paused,authorized=lambda:True):self.get_driver=get_driver;self.paused=paused;self.authorized=authorized;self.pid=None;self.composer=None;self.previous_windows=set()
     @staticmethod
     def descendants(root,limit=3500):
         pending=[root];seen=0
@@ -56,6 +56,7 @@ class WeChatMomentUI:
         return [w for w in automation.GetRootControl().GetChildren() if getattr(w,'ProcessId',None)==self.pid]
     def available(self):
         if self.paused():raise RuntimeError('desktop_busy')
+        if not self.authorized():raise RuntimeError('action_authorization_changed')
     def prepare(self):
         self.available();driver=self.get_driver();main=getattr(driver,'_win',None)
         if main is None:return None

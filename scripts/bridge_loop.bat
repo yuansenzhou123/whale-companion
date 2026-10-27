@@ -4,6 +4,7 @@ cd /d "%~dp0.."
 set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PY%" set "PY=python"
 :loop
+if exist "data\WECHAT_STOPPED" exit /b 0
 if exist "data\PAUSED" (
   timeout /t 5 /nobreak >nul
   goto loop
