@@ -1677,6 +1677,7 @@ def main():
         from wechat_action_worker import WeChatActionWorker,send_group_verified,send_group_ui_once
         from moment_publisher import MomentPublisher,WeChatMomentUI
         from moment_camera import locate_camera
+        from moment_dialogs import related_roots as moment_dialog_roots
         def action_paused():
             return (os.path.exists(os.path.join(ROOT,"data","WECHAT_STOPPED")) or AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen()
                     or os.path.exists(os.path.join(ROOT,"data","PAUSED")))
@@ -1697,7 +1698,7 @@ def main():
             def still_authorized():
                 job=action_worker.active_job
                 return bool(job) and action_worker.post('/api/actions/validate',{'id':job['id'],'lease':job['lease']}).get('valid') is True
-            publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused,still_authorized,report=log,camera_probe=locate_camera),lambda:MomentDB(db).get_my_moments(limit=8))
+            publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused,still_authorized,report=log,camera_probe=locate_camera,dialog_roots=moment_dialog_roots),lambda:MomentDB(db).get_my_moments(limit=8))
             with send_lock:
                 return with_window_on_top(lambda:publisher.publish(text,image_path=image_path),require_foreground=True)
         def action_send(text,name,username):

@@ -37,10 +37,10 @@ class MomentPublisher:
                 except Exception:pass
 
 class WeChatMomentUI:
-    def __init__(self,get_driver,paused,authorized=lambda:True,report=None,clock=time.monotonic,sleep=time.sleep,camera_probe=None):
+    def __init__(self,get_driver,paused,authorized=lambda:True,report=None,clock=time.monotonic,sleep=time.sleep,camera_probe=None,dialog_roots=None):
         self.get_driver=get_driver;self.paused=paused;self.authorized=authorized;self.report=report or (lambda *args:None)
         self.clock=clock;self.sleep=sleep;self.pid=None;self.main=None;self.composer=None;self.previous_windows=set();self.preparation_error=''
-        self.image_path=None;self.image_hash='';self.image_selected=False;self.camera_probe=camera_probe
+        self.image_path=None;self.image_hash='';self.image_selected=False;self.camera_probe=camera_probe;self.related_dialog_roots=dialog_roots;self.previous_pickers=set()
     def fail(self,reason):self.preparation_error=reason;self.report('朋友圈入口检查：'+reason);return None
     @staticmethod
     def descendants(root,limit=3500):
@@ -149,18 +149,55 @@ class WeChatMomentUI:
             except Exception:continue
         candidates=self.unique(candidates)
         return candidates[0] if len(candidates)==1 else None
-    def file_pickers(self):
-        return [w for w in self.own_roots() if self.cls(w)=='#32770' and self.name(w) in ('打开','Open','选择图片','选择文件')]
-    def select_image(self,picker,image_path):
-        if getattr(picker,'NativeWindowHandle',0) in self.previous_windows:return self.fail('图片选择窗口已存在，没有接管其他选图操作')
-        nodes=list(self.descendants(picker,1800))
-        edits=[n for n in nodes if self.kind(n)=='EditControl' and (str(getattr(n,'AutomationId','')) in ('1148','FileNameControlHost') or re.match(r'^(?:文件名|File name)',self.name(n),re.I))]
-        if not edits:
-            combos=[n for n in nodes if self.kind(n)=='ComboBoxControl' and (str(getattr(n,'AutomationId',''))=='1148' or re.match(r'^(?:文件名|File name)',self.name(n),re.I))]
-            edits=[n for combo in combos for n in self.descendants(combo,100) if self.kind(n)=='EditControl']
+    def dialog_roots(self):
+        return self.related_dialog_roots(self.main) if self.related_dialog_roots else self.own_roots()
+    def picker_controls(self,root):
+        # Skip file/folder lists: only the filename field and Open button are needed.
+        pending=[root];nodes=[]
+        while pending and len(nodes)<1500:
+            node=pending.pop(0);nodes.append(node)
+            if self.kind(node) in ('ListControl','TreeControl','DataGridControl','ListItemControl','TreeItemControl','DataItemControl'):continue
+            try:pending.extend(node.GetChildren())
+            except Exception:pass
+        def filename(node):
+            return str(getattr(node,'AutomationId','')) in ('1148','FileNameControlHost','FileNameComboBox') or bool(re.match(r'^(?:文件名|File name)',self.name(node),re.I))
+        edits=[node for node in nodes if self.kind(node)=='EditControl' and filename(node)]
+        hosts=[node for node in nodes if filename(node)]
+        for host in hosts:
+            edits.extend(node for node in self.descendants(host,100) if self.kind(node)=='EditControl')
         edits=self.unique(edits)
-        opens=[n for n in nodes if self.kind(n)=='ButtonControl' and re.fullmatch(r'(?:打开|Open)(?:\([A-Za-z]\))?',self.name(n).replace('&',''),re.I)]
+        if not edits:edits=self.unique(node for node in hosts if self.kind(node)=='ComboBoxControl')
+        opens=self.unique(node for node in nodes if self.kind(node)=='ButtonControl' and re.fullmatch(r'(?:打开|Open)(?:\([A-Za-z]\))?',self.name(node).replace('&',''),re.I))
+        return edits,opens
+    def file_pickers(self):
+        candidates=[]
+        for root in self.dialog_roots():
+            edits,opens=self.picker_controls(root)
+            if not edits or not opens:continue
+            if 'MainWindow' not in self.cls(root) and (not self.main or getattr(root,'NativeWindowHandle',0)!=getattr(self.main,'NativeWindowHandle',0)):
+                candidates.append(root);continue
+            # Qt may embed a chooser pane in the main window rather than a new #32770.
+            for edit in edits:
+                parent=edit
+                for _ in range(8):
+                    try:parent=parent.GetParentControl()
+                    except Exception:break
+                    if parent is None or 'MainWindow' in self.cls(parent):break
+                    fields,buttons=self.picker_controls(parent)
+                    if fields and buttons:candidates.append(parent);break
+        return self.unique(candidates)
+    def picker_diagnostics(self):
+        details=[]
+        for root in self.dialog_roots():
+            edits,opens=self.picker_controls(root)
+            details.append({'class':self.cls(root)[:80],'sameProcess':getattr(root,'ProcessId',None)==self.pid,'filenameFields':len(edits),'openButtons':len(opens)})
+        self.report('朋友圈选图窗口检查：'+str(details[:6]))
+    def select_image(self,picker,image_path):
+        handle=getattr(picker,'NativeWindowHandle',0)
+        if self.key(picker) in self.previous_pickers or handle and handle in self.previous_windows:return self.fail('图片选择窗口已存在，没有接管其他选图操作')
+        edits,opens=self.picker_controls(picker)
         if len(edits)!=1 or len(opens)!=1:return self.fail('图片选择窗口中未识别到唯一的文件名输入框和打开按钮')
+        self.report('朋友圈流程：向选图窗口文件名栏填入任务图片的完整路径')
         self.available();value=edits[0].GetValuePattern();value.SetValue(image_path)
         if normalized(value.Value).strip('"')!=image_path:return self.fail('图片文件名未能逐字核对，没有确认选图')
         self.click(opens[0])
@@ -173,17 +210,22 @@ class WeChatMomentUI:
         if callable(ensure) and not ensure(wake=False):return self.fail('微信已拉起，但未能重新识别主窗口控件')
         self.main=getattr(driver,'_win',None)
         if self.main is None:return self.fail('微信界面驱动没有可用的主窗口')
-        self.pid=self.main.ProcessId;self.previous_windows={getattr(w,'NativeWindowHandle',0) for w in self.own_roots()}
+        self.pid=self.main.ProcessId;self.previous_windows={getattr(w,'NativeWindowHandle',0) for w in self.dialog_roots() if getattr(w,'NativeWindowHandle',0)}
         if self.find_composer() is not None:return self.fail('朋友圈已有打开的编辑窗口，没有接管或覆盖')
-        if self.file_pickers():return self.fail('微信已有打开的选图窗口，没有接管')
+        existing_pickers=self.file_pickers();self.previous_pickers={self.key(window) for window in existing_pickers}
+        if existing_pickers:return self.fail('微信已有打开的选图窗口，请先取消上次遗留的选图再试')
         if not self.enter_moments():return None
         camera=self.wait_for(self.camera_ready)
         if camera is None:return self.fail('已打开朋友圈，但未识别到唯一的相机或发表入口')
         if not image_path or not pathlib.Path(image_path).is_file():return self.fail('此微信发表流程需要配图，未提供已授权图片，没有打开选图窗口')
         self.image_path=str(pathlib.Path(image_path).resolve());self.image_hash=hashlib.sha256(pathlib.Path(self.image_path).read_bytes()).hexdigest()
         self.report('朋友圈流程：点击相机并等待选图');self.click(camera)
-        picker=self.wait_for(lambda:self.file_pickers()[0] if len(self.file_pickers())==1 else None)
-        if picker is None:return self.fail('已点击相机，但未出现可验证的图片选择窗口')
+        def locate_picker():
+            pickers=self.file_pickers()
+            return pickers[0] if len(pickers)==1 else None
+        picker=self.wait_for(locate_picker,seconds=12)
+        if picker is None:
+            self.picker_diagnostics();return self.fail('已点击相机，但未识别到归属微信且带文件名输入框的选图窗口')
         if not self.select_image(picker,self.image_path):return None
         self.composer=self.wait_for(self.find_composer)
         if self.composer is None:return self.fail('已选择图片，但未识别到朋友圈文字编辑窗口')
