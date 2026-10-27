@@ -59,6 +59,10 @@ class WeChatActionWorker:
         self.pending_ack=ack
         target=job.get('target') or {};text=str(job.get('text') or '')
         valid=bool(text) and hashlib.sha256(text.encode()).hexdigest()==job.get('contentHash')
+        media=job.get('media')
+        if media:
+            proof=(text+'\0'+str(media.get('relativePath',''))+'\0'+str(media.get('sha256',''))).encode()
+            valid=valid and hashlib.sha256(proof).hexdigest()==job.get('mediaHash')
         valid=valid and self.post('/api/actions/validate',{'id':job['id'],'lease':job['lease']}).get('valid') is True
         if self.paused():valid=False
         if not valid:ack['error']='任务内容、授权或执行状态已改变'

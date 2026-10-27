@@ -657,6 +657,7 @@ def main():
         touched = False
         SEND_STATE["active"] = True
         SEND_STATE["start"] = time.time()
+        SEND_STATE["timeout"] = 90 if require_foreground else 40
         try:
             import win32gui
             import win32con
@@ -705,6 +706,7 @@ def main():
             return fn()
         finally:
             SEND_STATE["active"] = False
+            SEND_STATE["timeout"] = 40
             try:
                 if touched and hwnd and not was_topmost:
                     import win32gui
@@ -1630,11 +1632,12 @@ def main():
             log("发送通道预热失败：", repr(e))
 
     def send_watchdog():
-        """发送卡住超过 40 秒就重启桥接，避免整个队列卡死。"""
+        """普通发送超时40秒，朋友圈选图流程超时90秒后重连。"""
         while True:
             time.sleep(5)
-            if SEND_STATE["active"] and (time.time() - SEND_STATE["start"]) > 40:
-                log("发送卡住超过 40 秒，强制重启桥接进程…")
+            timeout = SEND_STATE.get("timeout", 40)
+            if SEND_STATE["active"] and (time.time() - SEND_STATE["start"]) > timeout:
+                log("界面操作卡住超过 %d 秒，强制重启桥接进程…" % timeout)
                 time.sleep(0.3)
                 os._exit(2)
 
@@ -1686,12 +1689,16 @@ def main():
         def publish_action_moment(text):
             if action_paused():return {"outcome":"draft","error":"当前窗口忙碌，保留文案"}
             from wechatauto.moment import MomentDB
+            from moment_media import prepare_moment_image
+            job=action_worker.active_job or {}
+            try:image_path=prepare_moment_image(ROOT,job.get('media'))
+            except (ValueError,OSError):return {"outcome":"draft","error":"未能确认任务绑定的emotion配图，未打开选图窗口"}
             def still_authorized():
                 job=action_worker.active_job
                 return bool(job) and action_worker.post('/api/actions/validate',{'id':job['id'],'lease':job['lease']}).get('valid') is True
             publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused,still_authorized,report=log),lambda:MomentDB(db).get_my_moments(limit=8))
             with send_lock:
-                return with_window_on_top(lambda:publisher.publish(text),require_foreground=True)
+                return with_window_on_top(lambda:publisher.publish(text,image_path=image_path),require_foreground=True)
         def action_send(text,name,username):
             sender=lambda text,name,username:send_text(text,name,username,queue_if_busy=False)
             if username.endswith("@chatroom"):

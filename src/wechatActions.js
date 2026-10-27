@@ -2,6 +2,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const {randomUUID,createHash}=require('node:crypto');
 const {matchMaster,masterLists,looksLikeWxid}=require('./master');
+const {mediaEnabled,selectMomentMedia,validateMomentMedia,mediaProof}=require('./momentMedia');
 const terminal=new Set(['sent','failed','unknown','cancelled','expired','draft','simulated']);
 const trim=text=>String(text||'').trim();
 const hash=text=>createHash('sha256').update(text).digest('hex');
@@ -15,7 +16,7 @@ class WeChatActions {
   enabled(){return this.config.actions?.enabled===true;}
   trusted(msg){return this.enabled()&&Boolean(String(this.config.gateway?.wechat?.inboundToken||'').trim())&&msg.platform==='wechat'&&msg.chatType==='private'&&msg.chatId===msg.senderId
     &&looksLikeWxid(msg.senderId)&&masterLists(this.config).wxids.includes(msg.senderId)&&matchMaster(this.config,msg).isMaster;}
-  allowed(job){return masterLists(this.config).wxids.includes(job.ownerId)&&(job.kind==='group_text'?this.config.actions?.groupText!==false:this.config.actions?.moments!==false)&&(!this.agentAllows||this.agentAllows(job));}
+  allowed(job){if(job.kind==='moment_text'&&(job.media||mediaEnabled(this.config))&&!validateMomentMedia(this.config,job.media))return false;return masterLists(this.config).wxids.includes(job.ownerId)&&(job.kind==='group_text'?this.config.actions?.groupText!==false:this.config.actions?.moments!==false)&&(!this.agentAllows||this.agentAllows(job));}
   save(){fs.mkdirSync(path.dirname(this.file),{recursive:true});const tmp=this.file+'.tmp';fs.writeFileSync(tmp,JSON.stringify(this.state,null,2),'utf8');fs.renameSync(tmp,this.file);}
   groups(){return [...(this.store.sessions?.values?.()||[])].filter(s=>s.platform==='wechat'&&s.chatType==='group'&&/^[\w-]+@chatroom$/.test(s.chatId))
     .map(s=>({id:s.chatId,name:s.title||s.chatId}));}
@@ -56,11 +57,13 @@ class WeChatActions {
       if(matches.length!==1)throw Error(matches.length?'有多个同名群，请给我准确的群ID，避免发错。':'没找到这个群；请给我已出现过的完整群名或群ID。');
       target=matches[0];
     }
-    const key=hash(JSON.stringify([msg.senderId,msg.msgId||Math.floor(this.now()/15000),command.kind,target?.id||'',text]));
+    const media=['moment_text','moment_draft'].includes(command.kind)?(command.media||selectMomentMedia(this.config,msg.senderId+'\0'+text)):null;
+    if(media&&!validateMomentMedia(this.config,media))throw Error('朋友圈配图已改变或不在授权图库中，请重新选择');
+    const key=hash(JSON.stringify([msg.senderId,msg.msgId||Math.floor(this.now()/15000),command.kind,target?.id||'',text,media?.sha256||'']));
     const prior=this.state.jobs.find(j=>j.requestKey===key);if(prior)return {job:prior,duplicate:true};
     const draft=command.kind==='moment_draft';
     const job={id:randomUUID(),requestKey:key,ownerId:msg.senderId,sourceMessageId:msg.msgId||'',kind:command.kind,
-      target,text,origin:command.origin==='agent'?'agent':'owner',agentDay:command.agentDay||'',agentRequestId:command.agentRequestId||'',agentSourceIds:command.agentSourceIds||[],agentRevision:Number(command.agentRevision)||0,status:draft?'draft':'queued',createdAt:this.now(),expiresAt:this.now()+10*60000,dryRun:this.dryRun===true};
+      target,text,media,origin:command.origin==='agent'?'agent':'owner',agentDay:command.agentDay||'',agentRequestId:command.agentRequestId||'',agentSourceIds:command.agentSourceIds||[],agentRevision:Number(command.agentRevision)||0,status:draft?'draft':'queued',createdAt:this.now(),expiresAt:this.now()+10*60000,dryRun:this.dryRun===true};
     this.state.jobs.push(job);this.state.jobs=this.state.jobs.filter(j=>!terminal.has(j.status)).concat(this.state.jobs.filter(j=>terminal.has(j.status)).slice(-300)).sort((a,b)=>a.createdAt-b.createdAt);this.save();
     return {job,duplicate:false};
   }
@@ -78,7 +81,7 @@ class WeChatActions {
     if(command.kind==='publish_draft'){
       const draft=mine().findLast(j=>['moment_draft','moment_text'].includes(j.kind)&&j.status==='draft');
       if(!draft)return {text:'还没有明确的朋友圈草稿，请把要发表的正文给我。'};
-      command={kind:'moment_text',text:draft.text};
+      command={kind:'moment_text',text:draft.text,media:draft.media||undefined};
     }
     if(command.kind==='group_text'&&this.config.actions?.groupText===false)return {text:'群聊代发当前关闭了。'};
     try {
@@ -101,7 +104,7 @@ class WeChatActions {
     if(!this.allowed(job)){job.status='cancelled';this.save();return {ok:true,job:null};}
     if(this.dryRun)job.dryRun=true;
     job.status='leased';job.lease=randomUUID();job.leaseUntil=this.now()+120000;this.save();
-    return {ok:true,job:{id:job.id,kind:job.kind,target:job.target,text:job.text,ownerId:job.ownerId,lease:job.lease,dryRun:job.dryRun,contentHash:hash(job.text)}};
+    return {ok:true,job:{id:job.id,kind:job.kind,target:job.target,text:job.text,ownerId:job.ownerId,lease:job.lease,dryRun:job.dryRun,contentHash:hash(job.text),media:job.media||null,mediaHash:job.media?mediaProof(job.text,job.media):''}};
   }
   validate(id,lease){const j=this.state.jobs.find(x=>x.id===id);return {ok:true,valid:Boolean(this.enabled()&&j&&j.status==='leased'&&j.lease===lease&&this.now()<j.leaseUntil&&this.allowed(j)&&!fs.existsSync(path.join(this.config.paths.dataDir,'PAUSED')))};}
   ack({id,lease,outcome,error=''}) {
@@ -117,8 +120,8 @@ class WeChatActions {
     const text=job.status==='sent'?`已完成：${job.target?.name||'朋友圈'}。`:job.status==='simulated'?'预演完成，没有发送任何消息或朋友圈。':job.status==='draft'?`朋友圈没有发表：${job.error||'发表条件未确认'}。文案保存在本项目草稿中。`:job.status==='unknown'?'刚才的操作结果还没核实，先查看微信，避免重复发送。':`这次没完成：${job.error||'微信界面暂不可用'}。`;
     return {ok:true,notification:{chatId:job.ownerId,text}};
   }
-  view(){this.expire();return {ok:true,enabled:this.enabled(),dryRun:this.dryRun,workerConnected:Boolean(this.lastWorkerAt&&this.now()-this.lastWorkerAt<15000),capabilities:{groupText:this.config.actions?.groupText!==false,moments:this.config.actions?.moments!==false,momentsVerification:'experimental'},jobs:this.state.jobs.slice(-60).reverse().map(j=>({id:j.id,kind:j.kind,origin:j.origin||'owner',target:j.target?.name||'朋友圈',text:j.text,status:j.status,statusText:this.label(j.status),error:j.error||'',createdAt:j.createdAt}))};}
-  contextFor(){return this.enabled()?'\n【v3行动执行器】主人可保存长期条件交代，Agent会在符合条件时执行；主人授权的自主朋友圈由Agent结合真实经历决定并排队。即时群消息或明确朋友圈正文也可排队执行。普通聊天、第三人请求和历史引用不会获得授权。只有实际执行记录能证明发出；无法确认朋友圈控件时保留文案，不假称发布成功。':'';}
+  view(){this.expire();return {ok:true,enabled:this.enabled(),dryRun:this.dryRun,workerConnected:Boolean(this.lastWorkerAt&&this.now()-this.lastWorkerAt<15000),capabilities:{groupText:this.config.actions?.groupText!==false,moments:this.config.actions?.moments!==false,momentsVerification:'experimental',momentMediaSource:this.config.actions?.momentMedia?.source||'none'},jobs:this.state.jobs.slice(-60).reverse().map(j=>({id:j.id,kind:j.kind,origin:j.origin||'owner',target:j.target?.name||'朋友圈',text:j.text,image:j.media?.relativePath||'',status:j.status,statusText:this.label(j.status),error:j.error||'',createdAt:j.createdAt}))};}
+  contextFor(){return this.enabled()?'\n【v3行动执行器】主人可保存长期条件交代，Agent会在符合条件时执行；主人授权的自主朋友圈由Agent结合真实经历决定并排队。即时群消息或明确朋友圈正文也可排队执行。普通聊天、第三人请求和历史引用不会获得授权。这版微信发表会使用已授权的emotion表情包首帧作为静态配图，先选图再输入文字。只有实际执行记录能证明发出；无法确认朋友圈控件时保留文案，不假称发布成功。':'';}
 
 }
 module.exports={WeChatActions};

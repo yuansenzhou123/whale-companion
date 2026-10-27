@@ -76,7 +76,7 @@ const PROVIDERS = {
 const DEFAULT_CONFIG = {
   provider: 'deepseek',
   server: { host: '127.0.0.1', port: 8787, openBrowser: true },
-  actions:{enabled:false,groupText:true,moments:true},
+  actions:{enabled:false,groupText:true,moments:true,momentMedia:{source:'none'}},
   agent:{enabled:false,autonomousMoments:false,startHour:10,endHour:22,dailyLimit:1,decisionIntervalMinutes:20,idleMinutes:15},
   deepseek: {
     provider: 'deepseek',

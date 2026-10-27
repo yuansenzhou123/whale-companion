@@ -46,7 +46,7 @@ def node(name='',kind='PaneControl',children=()):
 
 class EntryDiagnosticsTests(unittest.TestCase):
     def ui(self,main,roots=(),composer=None):
-        driver=SimpleNamespace(_win=main,ensure_window=mock.Mock(return_value=True));ui=WeChatMomentUI(lambda:driver,lambda:False)
+        driver=SimpleNamespace(_win=main,ensure_window=mock.Mock(return_value=True));clock=[0];ui=WeChatMomentUI(lambda:driver,lambda:False,clock=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds))
         ui.own_roots=lambda:list(roots);ui.find_composer=mock.Mock(return_value=composer)
         return ui,driver
     def test_missing_uia_driver_differs_from_a_missing_navigation_button(self):

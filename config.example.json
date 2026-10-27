@@ -158,5 +158,11 @@
     "model": "qwen3-asr-flash",
     "timeoutMs": 90000,
     "maxSeconds": 120
+  },
+  "actions": {
+    "momentMedia": {
+      "source": "none",
+      "_说明": "主人明确允许后改为emotion，使用本项目emotion目录内表情包首帧作为朋友圈配图；原图不改动。"
+    }
   }
 }
