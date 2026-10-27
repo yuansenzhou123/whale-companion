@@ -645,11 +645,14 @@ def main():
         except Exception as e:
             log_window_problem("调整微信窗口失败（继续发送）", e)
 
-    def with_window_on_top(fn):
-        """发送前确保微信在前台；游戏/全屏时不碰窗口。"""
+    def with_window_on_top(fn, require_foreground=False):
+        """发送前拉起微信；朋友圈必须核实成功后才查找编辑控件。"""
         if game_running():
-            return False
+            return {"outcome":"draft","error":"当前游戏运行中，未拉起微信"} if require_foreground else False
         hwnd = find_weixin_hwnd()
+        if require_foreground and not hwnd:
+            log("朋友圈前台检查失败：未找到微信主窗口，未尝试打开发表入口")
+            return {"outcome":"draft","error":"未找到微信主窗口，未尝试打开发表入口"}
         was_topmost = False
         touched = False
         SEND_STATE["active"] = True
@@ -688,6 +691,17 @@ def main():
                         log_window_problem("窗口置顶失败（继续发送）", e)
                     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                     time.sleep(0.2)
+            if require_foreground:
+                try:
+                    foreground = win32gui.GetForegroundWindow()
+                    verified = (foreground == hwnd or bool(foreground) and win32gui.GetAncestor(foreground, 2) == win32gui.GetAncestor(hwnd, 2))
+                    verified = verified and win32gui.IsWindowVisible(hwnd) and not win32gui.IsIconic(hwnd)
+                except Exception:
+                    verified = False
+                if not verified:
+                    log("朋友圈前台检查失败：未能把微信恢复并切到前台，未检查发表控件")
+                    return {"outcome":"draft","error":"未能把微信恢复并切到前台，尚未检查发表入口"}
+                log("朋友圈前台检查通过，开始识别发表入口")
             return fn()
         finally:
             SEND_STATE["active"] = False
@@ -723,7 +737,7 @@ def main():
                 except Exception:
                     pass
             time.sleep(0.15)
-            return True
+            return user32.GetForegroundWindow() == hwnd
         except Exception:
             return False
 
@@ -1675,9 +1689,9 @@ def main():
             def still_authorized():
                 job=action_worker.active_job
                 return bool(job) and action_worker.post('/api/actions/validate',{'id':job['id'],'lease':job['lease']}).get('valid') is True
-            publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused,still_authorized),lambda:MomentDB(db).get_my_moments(limit=8))
+            publisher=MomentPublisher(WeChatMomentUI(action_driver,action_paused,still_authorized,report=log),lambda:MomentDB(db).get_my_moments(limit=8))
             with send_lock:
-                return with_window_on_top(lambda:publisher.publish(text))
+                return with_window_on_top(lambda:publisher.publish(text),require_foreground=True)
         def action_send(text,name,username):
             sender=lambda text,name,username:send_text(text,name,username,queue_if_busy=False)
             if username.endswith("@chatroom"):

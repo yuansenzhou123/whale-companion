@@ -17,7 +17,7 @@ class MomentPublisher:
         try:
             before={str(p.get('id') or p.get('tid')) for p in self.get_posts()}
             editor=self.ui.prepare()
-            if editor is None:return {'outcome':'draft','error':'未找到可验证的朋友圈编辑入口'}
+            if editor is None:return {'outcome':'draft','error':getattr(self.ui,'preparation_error','') or '未找到可验证的朋友圈编辑入口'}
             if normalized(self.ui.read(editor)):
                 return {'outcome':'draft','error':'朋友圈已有未发送正文，没有覆盖'}
             self.ui.fill(editor,text)
@@ -35,7 +35,8 @@ class MomentPublisher:
                 self.sleep(.8)
             return {'outcome':'unknown','error':'已点击发表，但尚未核对到新动态；不自动重发'}
         except Exception as error:
-            return {'outcome':'unknown' if submitted else 'draft','error':type(error).__name__}
+            reason={'desktop_busy':'当前桌面忙碌，已停止发表操作','action_authorization_changed':'发表授权已改变，已停止操作'}.get(str(error),type(error).__name__)
+            return {'outcome':'unknown' if submitted else 'draft','error':reason}
         finally:
             if not submitted:
                 try:self.ui.abort()
@@ -43,7 +44,11 @@ class MomentPublisher:
 
 
 class WeChatMomentUI:
-    def __init__(self,get_driver,paused,authorized=lambda:True):self.get_driver=get_driver;self.paused=paused;self.authorized=authorized;self.pid=None;self.composer=None;self.previous_windows=set()
+    def __init__(self,get_driver,paused,authorized=lambda:True,report=None):
+        self.get_driver=get_driver;self.paused=paused;self.authorized=authorized;self.pid=None;self.composer=None;self.previous_windows=set()
+        self.preparation_error='';self.report=report or (lambda *args:None)
+    def fail(self,reason):
+        self.preparation_error=reason;self.report('朋友圈入口检查：'+reason);return None
     @staticmethod
     def descendants(root,limit=3500):
         pending=[root];seen=0
@@ -58,26 +63,33 @@ class WeChatMomentUI:
         if self.paused():raise RuntimeError('desktop_busy')
         if not self.authorized():raise RuntimeError('action_authorization_changed')
     def prepare(self):
-        self.available();driver=self.get_driver();main=getattr(driver,'_win',None)
-        if main is None:return None
+        self.preparation_error='';self.available();driver=self.get_driver()
+        if driver is None:return self.fail('微信已拉起，但界面自动化驱动不可用')
+        # Rebind a stale/minimized window without attempting login or a UI wake fallback.
+        ensure=getattr(driver,'ensure_window',None)
+        if callable(ensure) and not ensure(wake=False):return self.fail('微信已拉起，但未能重新识别主窗口控件')
+        main=getattr(driver,'_win',None)
+        if main is None:return self.fail('微信界面驱动没有可用的主窗口')
         self.pid=main.ProcessId
         self.previous_windows={getattr(w,'NativeWindowHandle',0) for w in self.own_roots()}
         # Never take over a pre-existing editor; it may contain the user's draft.
-        if self.find_composer():return None
+        if self.find_composer():return self.fail('朋友圈已有打开的编辑窗口，没有接管或覆盖')
         buttons=[n for n in self.descendants(main) if getattr(n,'ControlTypeName','')=='ButtonControl' and getattr(n,'Name','')=='朋友圈']
-        if len(buttons)!=1:return None
+        if len(buttons)!=1:return self.fail('微信已在前台，但未识别到唯一的朋友圈导航按钮（匹配%d个）'%len(buttons))
         buttons[0].Click();time.sleep(.6);self.available()
         roots=self.own_roots();publish=[]
         for root in roots:
             for node in self.descendants(root):
                 if getattr(node,'ControlTypeName','')=='ButtonControl' and getattr(node,'Name','') in ('发表朋友圈','发布朋友圈','发布动态','拍照分享','相机'):
                     publish.append(node)
-        if len(publish)!=1:return None
+        if len(publish)!=1:return self.fail('已打开朋友圈，但未识别到唯一的发表入口（匹配%d个）'%len(publish))
         publish[0].Click();time.sleep(.6);self.available()
         self.composer=self.find_composer()
-        if self.composer is None:return None
+        if self.composer is None:return self.fail('已点击朋友圈发表入口，但未识别到编辑窗口')
         editors=[n for n in self.descendants(self.composer,1500) if getattr(n,'ControlTypeName','')=='EditControl']
-        return editors[0] if len(editors)==1 else None
+        if len(editors)!=1:return self.fail('已识别朋友圈编辑窗口，但正文输入框不唯一（匹配%d个）'%len(editors))
+        self.report('朋友圈入口检查通过，已找到唯一正文输入框')
+        return editors[0]
     def find_composer(self):
         import re
         roots=self.own_roots();matches=[]

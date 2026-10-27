@@ -114,7 +114,7 @@ class WeChatActions {
       const key='wechat:g:'+job.target.id;this.store.ensureSession(key,{platform:'wechat',chatType:'group',chatId:job.target.id,title:job.target.name});
       this.store.appendMessage(key,{role:'assistant',name:this.config.persona.name,text:job.text,ts:this.now(),msgId:'action:'+job.id,sent:true});
     }
-    const text=job.status==='sent'?`已完成：${job.target?.name||'朋友圈'}。`:job.status==='simulated'?'预演完成，没有发送任何消息或朋友圈。':job.status==='draft'?'这台微信未能确认朋友圈发表入口，正文已留作草稿，没有发表。':job.status==='unknown'?'刚才的操作结果还没核实，先查看微信，避免重复发送。':`这次没完成：${job.error||'微信界面暂不可用'}。`;
+    const text=job.status==='sent'?`已完成：${job.target?.name||'朋友圈'}。`:job.status==='simulated'?'预演完成，没有发送任何消息或朋友圈。':job.status==='draft'?`朋友圈没有发表：${job.error||'发表条件未确认'}。文案保存在本项目草稿中。`:job.status==='unknown'?'刚才的操作结果还没核实，先查看微信，避免重复发送。':`这次没完成：${job.error||'微信界面暂不可用'}。`;
     return {ok:true,notification:{chatId:job.ownerId,text}};
   }
   view(){this.expire();return {ok:true,enabled:this.enabled(),dryRun:this.dryRun,workerConnected:Boolean(this.lastWorkerAt&&this.now()-this.lastWorkerAt<15000),capabilities:{groupText:this.config.actions?.groupText!==false,moments:this.config.actions?.moments!==false,momentsVerification:'experimental'},jobs:this.state.jobs.slice(-60).reverse().map(j=>({id:j.id,kind:j.kind,origin:j.origin||'owner',target:j.target?.name||'朋友圈',text:j.text,status:j.status,statusText:this.label(j.status),error:j.error||'',createdAt:j.createdAt}))};}

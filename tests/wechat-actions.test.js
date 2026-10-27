@@ -81,3 +81,10 @@ test('预演服务恢复旧的实际任务时仍强制预演，且以后不补�
  assert.equal(preview.state.jobs[0].status,'simulated');assert.equal(f.store.messages('wechat:g:123@chatroom').length,0);
  const normal=new WeChatActions({config:f.config,store:f.store});assert.equal(normal.next().job,null);
 });
+
+
+test('朋友圈失败通知带上具体前台原因，并说明草稿保存在项目中',t=>{
+ const f=setup(t);f.service.handle(f.msg('发朋友圈：SYNTHETIC_BODY'));const job=f.service.next().job;
+ const error='未能把微信恢复并切到前台，尚未检查发表入口';const done=f.service.ack({id:job.id,lease:job.lease,outcome:'draft',error});
+ assert.ok(done.notification.text.includes(error));assert.match(done.notification.text,/本项目草稿/);assert.equal(f.service.state.jobs[0].status,'draft');assert.equal(f.service.next().job,null);
+});
