@@ -64,6 +64,39 @@ class ImageFlowTests(unittest.TestCase):
         temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup);image=Path(temporary.name)/'image.png';Image.new('RGBA',(12,12),'blue').save(image);return Flow(image)
     def test_user_supplied_discover_camera_picker_caption_sequence(self):
         f=self.fixture();result=f.publisher().publish('SYNTHETIC_CAPTION',image_path=str(f.image));self.assertEqual(result['outcome'],'sent');self.assertEqual(f.events,['discover','feed','picker','compose','caption','posted']);self.assertEqual(f.publish.clicked,1)
+    def test_already_open_timeline_does_not_toggle_discover_or_moments(self):
+        f=self.fixture();f.stage='feed';f.entry.action=lambda:f.change('discover')
+        result=f.publisher().publish('SYNTHETIC_CAPTION',image_path=str(f.image))
+        self.assertEqual(result['outcome'],'sent');self.assertEqual(f.tabs[-1].clicked,0);self.assertEqual(f.entry.clicked,0);self.assertEqual(f.camera.clicked,1)
+    def test_discover_restores_timeline_and_skips_moments_entry(self):
+        f=self.fixture();f.tabs[-1].action=lambda:f.change('feed');f.entry.action=lambda:f.change('discover')
+        result=f.publisher().publish('SYNTHETIC_CAPTION',image_path=str(f.image))
+        self.assertEqual(result['outcome'],'sent');self.assertEqual(f.tabs[-1].clicked,1);self.assertEqual(f.entry.clicked,0);self.assertEqual(f.camera.clicked,1)
+    def test_delayed_restoration_is_observed_before_an_entry_click(self):
+        f=self.fixture()
+        def advance(seconds):
+            f.seconds+=seconds
+            if f.stage=='discover' and f.seconds>=.9:f.stage='feed'
+        f.ui.sleep=advance;f.entry.action=lambda:f.change('discover')
+        result=f.publisher().publish('SYNTHETIC_CAPTION',image_path=str(f.image))
+        self.assertEqual(result['outcome'],'sent');self.assertEqual(f.entry.clicked,0)
+    def test_restoration_during_entry_lookup_is_rechecked_before_click(self):
+        f=self.fixture();f.entry.IsOffscreen=True
+        def advance(seconds):
+            f.seconds+=seconds
+            if f.stage=='discover' and f.seconds>=2:f.stage='feed'
+            f.entry.IsOffscreen=f.seconds<2.2
+        f.ui.sleep=advance;f.entry.action=lambda:f.change('discover')
+        result=f.publisher().publish('SYNTHETIC_CAPTION',image_path=str(f.image))
+        self.assertEqual(result['outcome'],'sent');self.assertEqual(f.entry.clicked,0)
+    def test_hidden_or_disabled_camera_is_not_treated_as_a_ready_page(self):
+        for attribute,value in [('IsOffscreen',True),('IsEnabled',False)]:
+            f=self.fixture();f.stage='feed';setattr(f.camera,attribute,value)
+            def enter():
+                setattr(f.camera,attribute,not value);f.change('feed')
+            f.entry.action=enter
+            result=f.publisher().publish('SYNTHETIC_CAPTION',image_path=str(f.image))
+            self.assertEqual(result['outcome'],'sent');self.assertEqual(f.tabs[-1].clicked,1);self.assertEqual(f.entry.clicked,1)
     def test_existing_user_composer_is_preserved(self):
         f=self.fixture();f.stage='compose';f.caption_value.Value='EXISTING_USER_DRAFT';result=f.publisher().publish('SYNTHETIC_CAPTION',image_path=str(f.image));self.assertEqual(result['outcome'],'draft');self.assertEqual(f.caption_value.Value,'EXISTING_USER_DRAFT');self.assertEqual(f.events,[])
     def test_missing_approved_image_never_opens_picker(self):

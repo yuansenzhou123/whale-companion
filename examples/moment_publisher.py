@@ -92,13 +92,33 @@ class WeChatMomentUI:
             if len(tabs)==4:return tabs[3]
         named=self.named([self.main],('发现','Discover'))
         return named[0] if len(named)==1 else None
+    def camera_ready(self):
+        self.available();camera=self.camera_control()
+        if camera is None or not self.visible(camera):return None
+        try:
+            if not bool(getattr(camera,'IsEnabled',True)):return None
+            rect=camera.BoundingRectangle
+            if rect.right<=rect.left or rect.bottom<=rect.top:return None
+        except AttributeError:pass
+        except Exception:return None
+        return camera
     def enter_moments(self):
+        # Re-entry must not toggle an already open timeline back out of view.
+        if self.camera_ready() is not None:
+            self.report('朋友圈流程：当前页面已可选图，跳过发现和朋友圈导航');return True
         discover=self.discover_control()
-        if discover is not None:self.report('朋友圈流程：进入发现');self.click(discover)
+        if discover is not None:
+            self.report('朋友圈流程：进入发现');self.click(discover)
+            # Discover can restore its last subpage asynchronously.
+            if self.wait_for(self.camera_ready,seconds=1.2) is not None:
+                self.report('朋友圈流程：发现已恢复朋友圈页面，直接进入选图');return True
         def locate():
             rows=self.named([self.main],('朋友圈','Moments'))
             return rows[0] if len(rows)==1 else None
         entry=self.wait_for(locate)
+        # The timeline may finish restoring while its entry is being located.
+        if self.camera_ready() is not None:
+            self.report('朋友圈流程：朋友圈页面已就绪，取消重复导航');return True
         if entry is None:return self.fail('微信已在前台，但未识别到发现页唯一的朋友圈导航按钮')
         self.report('朋友圈流程：进入朋友圈');self.click(entry);return True
     def feed_roots(self):
@@ -154,7 +174,7 @@ class WeChatMomentUI:
         if self.find_composer() is not None:return self.fail('朋友圈已有打开的编辑窗口，没有接管或覆盖')
         if self.file_pickers():return self.fail('微信已有打开的选图窗口，没有接管')
         if not self.enter_moments():return None
-        camera=self.wait_for(self.camera_control)
+        camera=self.wait_for(self.camera_ready)
         if camera is None:return self.fail('已打开朋友圈，但未识别到唯一的相机或发表入口')
         if not image_path or not pathlib.Path(image_path).is_file():return self.fail('此微信发表流程需要配图，未提供已授权图片，没有打开选图窗口')
         self.image_path=str(pathlib.Path(image_path).resolve());self.image_hash=hashlib.sha256(pathlib.Path(self.image_path).read_bytes()).hexdigest()
