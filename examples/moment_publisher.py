@@ -167,7 +167,23 @@ class WeChatMomentUI:
             edits.extend(node for node in self.descendants(host,100) if self.kind(node)=='EditControl')
         edits=self.unique(edits)
         if not edits:edits=self.unique(node for node in hosts if self.kind(node)=='ComboBoxControl')
-        opens=self.unique(node for node in nodes if self.kind(node)=='ButtonControl' and re.fullmatch(r'(?:打开|Open)(?:\([A-Za-z]\))?',self.name(node).replace('&',''),re.I))
+        def under_combo(node):
+            parent=node
+            for _ in range(10):
+                try:parent=parent.GetParentControl()
+                except Exception:break
+                if parent is None:break
+                if self.kind(parent)=='ComboBoxControl' or 'combobox' in self.cls(parent).lower():return True
+                if self.key(parent)==self.key(root):break
+            return False
+        def open_name(node):
+            name=self.name(node).replace('&','').replace('（','(').replace('）',')')
+            return bool(re.fullmatch(r'(?:打开|Open)(?:\([A-Za-z]\))?',name,re.I))
+        buttons=self.unique(node for node in nodes if (self.kind(node) in ('ButtonControl','SplitButtonControl') or self.cls(node).lower()=='button') and open_name(node) and 'dropdown' not in str(getattr(node,'AutomationId','')).lower() and not under_combo(node))
+        # Common file dialogs expose the real default Open action as IDOK=1.
+        # The filename combo's arrow can also be named "Open"; it is not IDOK.
+        standard=[node for node in buttons if str(getattr(node,'AutomationId',''))=='1']
+        opens=standard if standard else buttons
         return edits,opens
     def file_pickers(self):
         candidates=[]
@@ -192,16 +208,52 @@ class WeChatMomentUI:
             edits,opens=self.picker_controls(root)
             details.append({'class':self.cls(root)[:80],'sameProcess':getattr(root,'ProcessId',None)==self.pid,'filenameFields':len(edits),'openButtons':len(opens)})
         self.report('朋友圈选图窗口检查：'+str(details[:6]))
+    def collapse_filename_history(self,edit):
+        parent=edit
+        for _ in range(10):
+            if self.kind(parent)=='ComboBoxControl' or 'combobox' in self.cls(parent).lower():
+                try:
+                    pattern=parent.GetExpandCollapsePattern()
+                    if pattern is not None and pattern.ExpandCollapseState!=0:
+                        self.available();pattern.Collapse();self.report('朋友圈流程：已收起文件名历史列表')
+                except Exception:pass
+                return
+            try:parent=parent.GetParentControl()
+            except Exception:return
+            if parent is None:return
+    def invoke_picker_open(self,button):
+        self.available()
+        if not bool(getattr(button,'IsEnabled',True)):return self.fail('选图窗口的打开按钮尚不可用，没有重复点击')
+        action=None;method=''
+        try:
+            pattern=button.GetInvokePattern()
+            if pattern is not None:action=pattern.Invoke;method='Invoke'
+        except Exception:pass
+        if action is None:
+            try:
+                pattern=button.GetLegacyIAccessiblePattern()
+                if pattern is not None:action=pattern.DoDefaultAction;method='DefaultAction'
+            except Exception:pass
+        if action is None:return self.fail('选图窗口的打开按钮不支持可核实的确认动作，未点击下拉箭头')
+        self.available();self.report('朋友圈流程：确认打开图片（控件ID=%s，类型=%s，动作=%s）'%(str(getattr(button,'AutomationId',''))[:30],self.kind(button),method))
+        try:action()
+        except Exception:self.report('朋友圈选图确认返回异常，仅检查窗口是否关闭，不重复确认')
+        return True
     def select_image(self,picker,image_path):
         handle=getattr(picker,'NativeWindowHandle',0)
         if self.key(picker) in self.previous_pickers or handle and handle in self.previous_windows:return self.fail('图片选择窗口已存在，没有接管其他选图操作')
         edits,opens=self.picker_controls(picker)
         if len(edits)!=1 or len(opens)!=1:return self.fail('图片选择窗口中未识别到唯一的文件名输入框和打开按钮')
         self.report('朋友圈流程：向选图窗口文件名栏填入任务图片的完整路径')
-        self.available();value=edits[0].GetValuePattern();value.SetValue(image_path)
+        self.collapse_filename_history(edits[0]);self.available();value=edits[0].GetValuePattern();value.SetValue(image_path)
         if normalized(value.Value).strip('"')!=image_path:return self.fail('图片文件名未能逐字核对，没有确认选图')
-        self.click(opens[0])
-        if not self.wait_for(lambda:not self.file_pickers()):return self.fail('选择图片后文件窗口仍未关闭，未继续发表')
+        self.collapse_filename_history(edits[0])
+        # Collapse can change the live tree; rebind the true Open action and recheck text.
+        fields,buttons=self.picker_controls(picker)
+        if len(fields)!=1 or len(buttons)!=1:return self.fail('收起历史列表后打开按钮不唯一，没有继续确认')
+        if normalized(fields[0].GetValuePattern().Value).strip('"')!=image_path:return self.fail('收起历史列表后图片路径已变化，没有确认打开')
+        if not self.invoke_picker_open(buttons[0]):return None
+        if not self.wait_for(lambda:not self.file_pickers(),seconds=8):return self.fail('已确认打开图片，但文件窗口仍未关闭；没有重复点击')
         self.image_selected=True;self.report('朋友圈流程：已选择任务绑定的配图');return True
     def prepare(self,image_path=None):
         self.preparation_error='';self.image_selected=False;self.available();driver=self.get_driver()

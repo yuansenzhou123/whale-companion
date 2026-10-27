@@ -17,6 +17,7 @@ class Control:
     def Click(self):
         self.clicked+=1
         if self.action:self.action()
+    def GetInvokePattern(self):return SimpleNamespace(Invoke=self.Click)
     def GetValuePattern(self):return self.value
     def GetWindowPattern(self):return SimpleNamespace(Close=lambda:None)
 
