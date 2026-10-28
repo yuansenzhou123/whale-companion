@@ -134,3 +134,40 @@ test('礼貌条件请求在确认过程中遇到另一私聊来信，来信等�
  release(JSON.stringify({action:'remember',target:'甲',quote:text,confidence:.99,mode:'any',exactReply:'我这会儿很忙',duration:'until_cancelled'}));
  await owner;assert.equal((await guest).text,'我这会儿很忙');assert.equal(f.agent.active()[0].target.id,'wxid_alice');
 });
+
+
+test('自主发表进行中的合法校验计作心跳，不因超过20秒未拉取新任务而误撤权',async t=>{
+  const f=fixture(t),id=evidence(f);post(f,id);await f.autonomy.tick({force:true});
+  const job=f.actions.next().job,started=f.args.now();
+  f.advance(23000);f.actions.lastWorkerAt=started;
+  assert.equal(f.autonomy.available(),false,'重现UI忙碌期间轮询心跳过期');
+  assert.equal(f.actions.validate(job.id,job.lease).valid,true);
+  assert.equal(f.actions.lastWorkerAt,f.args.now());
+  assert.equal(f.autonomy.available(),true);
+  const until=f.actions.state.jobs[0].leaseUntil;
+  f.advance(30000);f.actions.lastWorkerAt=started;
+  assert.equal(f.actions.validate(job.id,job.lease).valid,true);
+  assert.equal(f.actions.state.jobs[0].leaseUntil,until,'校验不是续租');
+});
+
+test('错误租约和已过期任务不能刷新心跳或恢复发表资格',async t=>{
+  const f=fixture(t),id=evidence(f);post(f,id);await f.autonomy.tick({force:true});
+  const job=f.actions.next().job,started=f.args.now();
+  f.advance(23000);f.actions.lastWorkerAt=started;
+  assert.equal(f.actions.validate(job.id,'wrong-lease').valid,false);
+  assert.equal(f.actions.lastWorkerAt,started);
+  f.advance(120000);f.actions.lastWorkerAt=started;
+  assert.equal(f.actions.validate(job.id,job.lease).valid,false);
+  assert.equal(f.actions.lastWorkerAt,started);
+  assert.equal(f.actions.next().job,null);
+  assert.equal(f.actions.state.jobs[0].status,'unknown');
+});
+
+test('执行心跳不会绕过真实的朋友圈关停、权限版本改变或遗忘来源',async t=>{
+  for(const revoke of [f=>{f.config.actions.moments=false;},f=>{f.agent.state.controlRevision=(f.agent.state.controlRevision||0)+1;},f=>{f.shared.forget('wxid_owner','猫咪');}]){
+    const f=fixture(t),id=evidence(f);post(f,id);await f.autonomy.tick({force:true});
+    const job=f.actions.next().job,started=f.args.now();
+    f.advance(23000);f.actions.lastWorkerAt=started;revoke(f);
+    assert.equal(f.actions.validate(job.id,job.lease).valid,false);
+  }
+});

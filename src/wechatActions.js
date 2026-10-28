@@ -106,7 +106,15 @@ class WeChatActions {
     job.status='leased';job.lease=randomUUID();job.leaseUntil=this.now()+120000;this.save();
     return {ok:true,job:{id:job.id,kind:job.kind,target:job.target,text:job.text,ownerId:job.ownerId,lease:job.lease,dryRun:job.dryRun,contentHash:hash(job.text),media:job.media||null,mediaHash:job.media?mediaProof(job.text,job.media):''}};
   }
-  validate(id,lease){const j=this.state.jobs.find(x=>x.id===id);return {ok:true,valid:Boolean(this.enabled()&&j&&j.status==='leased'&&j.lease===lease&&this.now()<j.leaseUntil&&this.allowed(j)&&!fs.existsSync(path.join(this.config.paths.dataDir,'PAUSED')))};}
+  validate(id,lease){
+    const j=this.state.jobs.find(x=>x.id===id),now=this.now();
+    const active=Boolean(j&&j.status==='leased'&&j.lease===lease&&now<j.leaseUntil);
+    // Authenticated checks by the holder of a current lease are worker activity.
+    // UI execution blocks next() polling; do not mistake that for a disconnect.
+    // This does not renew the lease or bypass permissions, revocation or evidence.
+    if(active)this.lastWorkerAt=now;
+    return {ok:true,valid:Boolean(this.enabled()&&active&&this.allowed(j)&&!fs.existsSync(path.join(this.config.paths.dataDir,'PAUSED')))};
+  }
   ack({id,lease,outcome,error=''}) {
     const job=this.state.jobs.find(j=>j.id===id);if(!job||job.lease!==lease)return {ok:false,error:'任务确认不匹配'};
     if(terminal.has(job.status))return {ok:true,duplicate:true};
