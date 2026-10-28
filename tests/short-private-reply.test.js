@@ -12,7 +12,7 @@ test('full私聊明确标记历史和当前消息，保留事实、隔离旧AI�
   const before=structuredClone(history), bot=new Bot({config:c,store:{messages:()=>history},llm:{}});
   const turns=bot.buildTurns({chatType:'private',text:'还是不知道吃啥啊'},history);
   assert.match(turns[0].content,/历史发言/);assert.match(turns[0].content,/你好人机/);
-  assert.match(turns.at(-1).content,/当前需要回应的唯一消息.*\n还是不知道吃啥啊/s);
+  assert.match(turns.at(-1).content,/本轮消息，请结合.*\n还是不知道吃啥啊/s);
   assert.match(JSON.stringify(turns),/不吃香菜/);assert.doesNotMatch(JSON.stringify(turns),/旧AI长篇/);
   assert.deepEqual(bot.recentOwn({key:'test'}),['嗯，记着啦']);assert.deepEqual(history,before);
 });

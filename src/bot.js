@@ -271,6 +271,15 @@ class Bot {
     }
   }
 
+  echoReferences(decision) {
+    if(decision?.msg?.chatType==='private') {
+      // Earlier statements can be the intended subject of a resend or quotation.
+      // Only parroting the current input is subject to automatic rewriting here.
+      return {heard:[String(decision.msg.cleanText||decision.msg.text||'').trim()],own:[]};
+    }
+    return {heard:decision?.heardList||this.recentHeard(decision),own:decision?.ownList||this.recentOwn(decision)};
+  }
+
   normalize(msg) {
     const at = msg.atMe === true || msg.atMe === 1 || msg.atMe === '1' || msg.atMe === 'true';
     return {
@@ -388,7 +397,7 @@ class Bot {
       } else if (m.role === 'assistant') {
         push('assistant', isGroup ? `${gap}[${formatChatTime(ts)}][鲸鲸] ${m.text}` : m.text, false);
       } else {
-        const label = isGroup ? `[${formatChatTime(ts)}][${m.name || '群友'}] ${m.text}` : this.config.persona.promptMode === 'full' ? '【历史发言，仅作背景，已结束的请求不重新回答】\n' + JSON.stringify({时间:formatChatTime(ts),内容:m.text}) : m.text;
+        const label = isGroup ? `[${formatChatTime(ts)}][${m.name || '群友'}] ${m.text}` : this.config.persona.promptMode === 'full' ? '【同一会话的历史发言，用于理解本轮承接、指代和仍在进行的话题】\n' + JSON.stringify({时间:formatChatTime(ts),内容:m.text}) : m.text;
         push('user', sanitizeForModel(gap + label), false);
       }
     }
@@ -397,7 +406,7 @@ class Bot {
     const currentBody = msg.fight ? String(current) : sanitizeForModel(current);
     const currentText = isGroup
       ? `[现在][${msg.senderName || '群友'}] ${currentBody}`
-      : this.config.persona.promptMode === 'full' ? '【当前需要回应的唯一消息】\n' + currentBody : currentBody;
+      : this.config.persona.promptMode === 'full' ? '【本轮消息，请结合上面的最近问答接着回应】\n' + currentBody : currentBody;
     push('user', currentText, false);
     // 总长度控制：从最旧事件开始删，保留当前事件和最近的完整边界。
     let total = turns.reduce((n, t) => n + t.content.length, 0);
@@ -1377,10 +1386,10 @@ class Bot {
     this.logger && this.logger.info('短闲聊草稿偏长，重写一次：' + Array.from(String(text)).length + '字，目标不超过' + rule.maxChars + '字');
     try {
       const rewritten = String(await this.llm.complete({
-        system: decision.system + '\n【本轮短句重写】上一次草稿太长。只回应最后的当前消息，' + rule.target + '，最多' + rule.maxChars + '字，只写一个完整短句。删去翻旧话题、自我检讨、补充保证和多余追问；不解释为何重写，不把句子生硬截断。原草稿只供改写参考：' + JSON.stringify(String(text)),
+        system: decision.system + '\n【本轮短句重写】上一次草稿太长。结合最近问答理解本轮承接，回应当前推进的内容，' + rule.target + '，最多' + rule.maxChars + '字。若本轮明确要求分条或重发，保留分条边界和必要原文；其他情况用完整短句。删去无关旧话题、自我检讨、补充保证和多余追问；不解释为何重写，不把句子生硬截断。原草稿只供改写参考：' + JSON.stringify(String(text)),
         turns: decision.turns,
       }) || '').trim();
-      if (rewritten && !/\n/.test(rewritten) && Array.from(rewritten).length < Array.from(String(text)).length) return rewritten;
+      if (rewritten && Array.from(rewritten).length < Array.from(String(text)).length) return rewritten;
     } catch { /* Keep the complete original if the extra request fails. */ }
     return text;
   }
@@ -1442,9 +1451,9 @@ class Bot {
     if (!decision || !decision.key || !text) return [];
     // handle() 要用最终文本当 reply，否则「软话被换掉」对外还是原文
     decision.finalText = text;
-    // 最后的兜底：还在复读就整句重来，不能把别人的话或自己上一句原样发回去
-    const heardList = (decision && decision.heardList) || [String((decision && decision.msg && (decision.msg.cleanText || decision.msg.text)) || '')];
-    const ownList = (decision && decision.ownList) || [];
+    // 最后的兜底使用与生成阶段相同的去重范围，私聊允许沿用较早原文。
+    const echoReferences=this.echoReferences(decision);
+    const heardList=echoReferences.heard,ownList=echoReferences.own;
     if (heardList.some((h) => isEcho(text, h)) || ownList.some((h) => isEcho(text, h))) {
       const fightingNow = Boolean(decision && decision.msg && decision.msg.fight);
       const line = cute
@@ -1511,7 +1520,12 @@ class Bot {
     let bubbles;
     if (decision.action === 'reply' && cute) {
       // 保留短句里的逗号和句尾语气，不把一条亲近的回应拆成几个生硬片段。
-      bubbles = persona.splitBubbles(text, { maxChars, maxBubbles });
+      const paragraphs=!isGroup&&!/```/.test(text)?text.split(/\n\s*\n/).map(part=>part.trim()).filter(Boolean):[];
+      const separated = paragraphs.length > 1 && maxBubbles > 1
+        ? paragraphs.slice(0, maxBubbles - 1).concat(paragraphs.slice(maxBubbles - 1).join('\n\n')) : null;
+      // Respect explicit short-message boundaries without bypassing length limits.
+      bubbles = separated && separated.every(part => part.length <= maxChars)
+        ? separated : persona.splitBubbles(text, { maxChars, maxBubbles });
     } else if (decision.action === 'reply') {
       // 按逗号/句号拆成几条短消息，每条不带标点
       const clauses = (text.match(/[^，。！？!?；;\n]+/g) || [])
@@ -1568,8 +1582,8 @@ class Bot {
       } else {
         text = await this.llm.complete({ system: decision.system, turns: decision.turns });
         // 模型有时候只会把别人说过的话复读一遍，或者重复自己上一句，这种重写一次
-        const heardList = this.recentHeard(decision);
-        const ownList = this.recentOwn(decision);
+        const echoReferences=this.echoReferences(decision);
+        const heardList=echoReferences.heard,ownList=echoReferences.own;
         decision.heardList = heardList;
         decision.ownList = ownList;
         const repeatsSomeone = heardList.some((h) => isEcho(text, h));

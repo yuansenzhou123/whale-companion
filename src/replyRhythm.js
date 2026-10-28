@@ -16,11 +16,11 @@ function replyRhythm(config, msg = {}) {
 }
 
 function rhythmHint(rule) {
-  return rule ? `\n【本轮私聊节奏】最后一条才是现在要回应的话；较早发言只作背景，已经聊过的问题不用重新回答。对方这次说得很短，你也只接一个短句，${rule.target}，尽量不超过${rule.maxChars}字。一条消息、一小反应，说完停下；不补自我检讨、陪伴保证、建议或追问，不翻出较早的评价。字数没有下限，不凑字。不把简单招呼当成要求继续上一个话题。` : '';
+  return rule ? `\n【本轮私聊节奏】结合最近完整问答理解当前消息的承接，只推进本轮需要的部分，不重复回答无关旧问题。对方这次说得很短，你也只接一个短句，${rule.target}，尽量不超过${rule.maxChars}字。默认一个简短反应，说完停下；本轮明确在调整分条格式时保留需要的消息边界；不补自我检讨、陪伴保证、建议或追问，不翻出较早的评价。字数没有下限，不凑字。不把简单招呼当成要求继续上一个话题。` : '';
 }
 
 function needsShorter(text, rule) {
-  return Boolean(rule && (Array.from(String(text).trim()).length > rule.maxChars || /\n/.test(String(text).trim())));
+  return Boolean(rule && Array.from(String(text).trim()).length > rule.maxChars);
 }
 
 module.exports = {replyRhythm, rhythmHint, needsShorter};
