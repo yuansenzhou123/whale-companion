@@ -100,3 +100,47 @@ test('私聊仍拦截直接照抄本轮输入，群聊仍使用近期去重依�
   const heard=['GROUP_HEARD'],own=['GROUP_OWN'];
   assert.deepEqual(bot.echoReferences({key,msg:{chatType:'group'},heardList:heard,ownList:own}),{heard,own});
 });
+
+
+for (const separator of ['\n', '\r\n', '\r', '\n\n']) {
+  test(`普通私聊分行真正生成两个气泡：${JSON.stringify(separator)}`, async t=>{
+    const {calls,outputs,bot,msg}=setup(t);
+    const text='LINE_A'+separator+'LINE_B';
+    outputs.push(text);
+    const result=await bot.handle(msg('请分两条发'));
+    assert.equal(calls.length,1);
+    assert.deepEqual(result.bubbles,['LINE_A','LINE_B']);
+  });
+}
+
+test('群聊、单行文字和代码块不受普通私聊换行拆分影响', t=>{
+  const {bot,msg,key}=setup(t);
+  const finalize=(text,extra={})=>bot.finalize({key,action:'reply',msg:{...msg('请详细解释'),...extra}},text);
+  assert.deepEqual(finalize('LINE_A\nLINE_B',{chatType:'group'}),['LINE_A\nLINE_B']);
+  assert.deepEqual(finalize('LINE_A，LINE_B'),['LINE_A，LINE_B']);
+  assert.deepEqual(finalize('```\nLINE_A\nLINE_B\n```'),['```\nLINE_A\nLINE_B\n```']);
+});
+
+test('微信HTTP回包保留单换行拆出的两个气泡，桥接可以逐条消费', async t=>{
+  const {startServer}=require('../server');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-bubble-wire-'));
+  fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify({
+    persona:{promptMode:'full',customPrompt:'PERSONA_FIXTURE_VERBATIM',stylePreset:'可爱'},
+    chat:{maxBubbles:2,privateMaxChars:140},agent:{enabled:false},
+    gateway:{wechat:{enabled:true,inboundToken:'fixture-bubble-token'}}
+  }));
+  const app=await startServer({root:dir,env:{},port:0,openBrowser:false});
+  t.after(async()=>{await app.close();fs.rmSync(dir,{recursive:true,force:true});});
+  app.runtime.bot.companion=null;app.runtime.bot.relationship=null;
+  Object.defineProperty(app.runtime.llm,'isMock',{value:false,configurable:true});
+  app.runtime.llm.complete=async()=> 'LINE_A\nLINE_B';
+  const response=await fetch(app.url+'/webhook/wechat',{method:'POST',
+    headers:{'Content-Type':'application/json','X-Bot-Token':'fixture-bubble-token'},
+    body:JSON.stringify({chat_id:'wxid_fixture',sender_id:'wxid_fixture',chat_type:'private',text:'请分两条发',msg_id:'fixture-newline'})
+  });
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.action,'reply');
+  assert.deepEqual(result.bubbles,['LINE_A','LINE_B']);
+  assert.equal(result.reply,'LINE_A\nLINE_B');
+});

@@ -1520,10 +1520,11 @@ class Bot {
     let bubbles;
     if (decision.action === 'reply' && cute) {
       // 保留短句里的逗号和句尾语气，不把一条亲近的回应拆成几个生硬片段。
-      const paragraphs=!isGroup&&!/```/.test(text)?text.split(/\n\s*\n/).map(part=>part.trim()).filter(Boolean):[];
+      const paragraphs = !isGroup && !/```/.test(text)
+        ? text.split(/(?:\r\n?|\n)+/).map(part => part.trim()).filter(Boolean) : [];
       const separated = paragraphs.length > 1 && maxBubbles > 1
         ? paragraphs.slice(0, maxBubbles - 1).concat(paragraphs.slice(maxBubbles - 1).join('\n\n')) : null;
-      // Respect explicit short-message boundaries without bypassing length limits.
+      // 普通换行和空行都是短消息边界，不依赖模型一定输出两个换行。
       bubbles = separated && separated.every(part => part.length <= maxChars)
         ? separated : persona.splitBubbles(text, { maxChars, maxBubbles });
     } else if (decision.action === 'reply') {
