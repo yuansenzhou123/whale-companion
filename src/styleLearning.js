@@ -3,12 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {randomUUID, createHash} = require('node:crypto');
 const {masterLists, looksLikeWxid, matchMaster} = require('./master');
+const {replyRhythm} = require('./replyRhythm');
 
 const sensitive = /密码|验证码|api[ _-]?key|密钥|令牌|银行卡|身份证|sk-[a-z0-9]{12,}/i;
 const unsafe = /system\s*prompt|忽略.{0,12}(指令|规则|设定)|覆盖.{0,12}(权限|系统)|执行命令|管理员权限|发送消息|发朋友圈|泄露|读取文件|删除文件/i;
 const hypothetical = /^(?:如果|假如|假设|比如|例如|转发|引用|别人说|他说|她说|我朋友说)/;
-const styleWords = /说话|说得|说的|说法|接话|回复|回话|回答|语气|口吻|口气|腔调|措辞|表达|语言|称呼|叫我|喊我|长篇|小作文|短点|短些|短一点|长一点|话太多|话好多|字太多|字数|太长|太短|很长|这么长|那么长|好长|追问|反问|问我|人机|像AI|AI味|官方|客服|套话|撒娇|卖萌|可爱|亲昵|亲密|亲近|温柔|冷淡|生硬|敷衍|啰嗦|女友|女朋友|恋人|黏|粘人|腻|颜文字|emoji|表情|标点|句号|括号|波浪|本鱼|本鲸|排比|比喻|例句|对话例子|说教|讲道理|油腻|装傻|端着|别扭|机械|模板/i;
-const feedbackWords = /以后|今后|下次|希望|能不能|可不可以|可以|不要|别|少|多|太|有点|有些|一点|还是|不够|不太|不像|不符合|更|改|换|喜欢|不喜欢|讨厌|舒服|自然|就这样|这样就|这种感觉|这样挺|这样好|这样说|这种说法|不对|不行|不错|挺好|很好|更好/;
+const styleWords = /格式|分条|分段|换行|拆开|拆成|没拆|未拆|没分开|同一条|分[两二]次发|分[两二]条发|说话|说得|说的|说法|接话|回复|回话|回答|语气|口吻|口气|腔调|措辞|表达|语言|称呼|叫我|喊我|长篇|小作文|短点|短些|短一点|长一点|话太多|话好多|字太多|字数|太长|太短|很长|这么长|那么长|好长|追问|反问|问我|人机|像AI|AI味|官方|客服|套话|撒娇|卖萌|可爱|亲昵|亲密|亲近|温柔|冷淡|生硬|敷衍|啰嗦|女友|女朋友|恋人|黏|粘人|腻|颜文字|emoji|表情|标点|句号|括号|波浪|本鱼|本鲸|排比|比喻|例句|对话例子|说教|讲道理|油腻|装傻|端着|别扭|机械|模板/i;
+const feedbackWords = /不能|能否|还没|没有|请|一下|以后|今后|下次|希望|能不能|可不可以|可以|不要|别|少|多|太|有点|有些|一点|还是|不够|不太|不像|不符合|更|改|换|喜欢|不喜欢|讨厌|舒服|自然|就这样|这样就|这种感觉|这样挺|这样好|这样说|这种说法|不对|不行|不错|挺好|很好|更好/;
 const positive = /(?:这句|刚才|这样|这种|这个).{0,24}(?:不错|挺好|很好|喜欢|舒服|自然|对了)|(?:喜欢|就要|就是|对).{0,12}(?:这样|这种|这个感觉)|就这样说|这样就对|就(?:是)?这(?:个|种)(?:味|感觉)/;
 const referential = /这句|刚才|上句|上面|你这|这样|这种|这个感觉|太长|太短|人机|AI味/i;
 const dimensions = new Set(['length','tone','questions','address','affection','punctuation','format','other']);
@@ -201,23 +202,23 @@ class StyleLearning {
       .concat(hints.filter(h=>h.scope==='all'||h.scope===msg.chatType));
   }
   contextFor(msg) {
-    const rows=this.applicable(msg), p=this.trusted(msg)?this.state.profiles[this.owner(msg.senderId)]:null;
-    const retired=p?.rules.filter(r=>r.status!=='active').slice(-6).map(r=>r.quote)||[];
-    if(!rows.length&&!retired.length)return '';
+    const rows=this.applicable(msg);
+    if(!rows.length)return '';
+    // Rejected/retired examples remain reviewable locally, but are not demonstrations.
     const data=rows.map(r=>({场景:r.scope,表达要求:r.rule,...(r.publicOnly?{}:{用户反馈原话:r.quote,
-      ...(r.approved?{用户明确认可的真实回复摘录:r.approved.slice(0,220)}:{}),...(r.rejected?{被纠正的旧措辞摘录勿模仿:r.rejected.slice(0,180)}:{})})}));
+      ...(r.approved?{用户明确认可的真实回复摘录:r.approved.slice(0,220)}:{})})}));
     return '\n【从对话中学到的当前表达偏好】\n'
       +'以下仅调整说话方式；当前用户本轮的明确要求优先，其次采用下面当前有效偏好；具体场景的要求优先于通用要求，同场景以较新的纠正为准。与旧人设措辞、旧反馈或历史回复冲突时采用新偏好，不改变事实、身份认证或操作权限。完整人设仍保留。\n'
       +'把改动体现在本轮措辞里；用户只是在纠正说法时简短接住，不复述一长段学习过程，不声称重新训练了模型。只学习例句的表达，不把情节当成现实经历。认真问题仍保留必要信息。\n'
-      +(retired.length?'已撤销或被替代的旧反馈，不再作为当前表达要求：'+JSON.stringify(retired)+'\n':'')
       +JSON.stringify(data);
   }
   rhythm(msg, base) {
-    if(!base)return base;
+    const budget=base||replyRhythm(this.config,msg);
+    if(!budget)return null;
     const length=this.applicable(msg).filter(r=>r.dimension==='length').at(-1);
     if(length?.lengthMode==='detailed')return null;
-    if(length?.lengthMode==='brief')return {...base,maxChars:Math.min(base.maxChars,16),target:'尽量一个短句，只接当前话题，不补说明'};
-    return base;
+    if(length?.lengthMode==='brief')return {...budget,maxChars:Math.min(budget.maxChars,16),target:'尽量一个短句，只接当前话题，不补说明'};
+    return budget;
   }
   view(id) {
     const p=this.profile(id);

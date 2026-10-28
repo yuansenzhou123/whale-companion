@@ -19,6 +19,7 @@
  */
 const persona = require('./persona');
 const {replyRhythm, rhythmHint, needsShorter} = require('./replyRhythm');
+const {conversationFocus, conversationContract, continuationNeedsRoom} = require('./conversationFocus');
 const { matchMaster } = require('./master');
 const links = require('./links');
 const websearch = require('./websearch');
@@ -907,9 +908,12 @@ class Bot {
     if (this.sharedMemory) system += this.sharedMemory.contextFor({...msg,isMaster});
     if(this.wechatActions)system+=this.wechatActions.contextFor(msg);
     if(this.agent)system+=this.agent.contextFor(msg);
-    system += rhythmHint(this.rhythmFor(msg));
-    if(this.styleLearning)system += this.styleLearning.contextFor(msg);
     const turns = this.buildTurns(msg, hasText ? history.slice(0, -1) : history);
+    msg.replyNeedsRoom = continuationNeedsRoom(this.config, msg, turns);
+    if (this.config.persona.promptMode === 'full') system += conversationFocus(msg, turns);
+    if(this.styleLearning)system += this.styleLearning.contextFor(msg);
+    system += rhythmHint(this.rhythmFor(msg));
+    system += conversationContract(msg);
 
     // 对喷的台词交给模型自己现编；只有没配 Key 的演示模式才用本地库顶着
     if (fight && this.llm.isMock) {
@@ -1366,7 +1370,7 @@ class Bot {
     }
     if (this.rhythmFor(decision.msg)) {
       if (signal?.aborted) return;
-      const draft = await this.llm.complete({system:decision.system, turns:decision.turns});
+      const draft = await this.llm.complete({system:decision.system, turns:decision.turns, ...this.chatGenerationOptions(decision.msg), signal});
       if (signal?.aborted) return;
       const checked = await this.applyReplyRhythm(decision, draft);
       if (!signal?.aborted) yield checked;
@@ -1380,6 +1384,12 @@ class Bot {
   /** Only ordinary short private chat is checked; preserve complete answers on failure. */
   rhythmFor(msg) {const base=replyRhythm(this.config,msg);return this.styleLearning?this.styleLearning.rhythm(msg,base):base;}
 
+  chatGenerationOptions(msg) {
+    // Only ordinary private chat opts out of thinking; substantive replies keep
+    // the configured model and options. No global model/key changes.
+    return this.rhythmFor(msg) ? {thinking:false, temperature:1} : {};
+  }
+
   async applyReplyRhythm(decision, text) {
     const rule = this.rhythmFor(decision.msg);
     if (!needsShorter(text, rule)) return text;
@@ -1388,6 +1398,7 @@ class Bot {
       const rewritten = String(await this.llm.complete({
         system: decision.system + '\n【本轮短句重写】上一次草稿太长。结合最近问答理解本轮承接，回应当前推进的内容，' + rule.target + '，最多' + rule.maxChars + '字。若本轮明确要求分条或重发，保留分条边界和必要原文；其他情况用完整短句。删去无关旧话题、自我检讨、补充保证和多余追问；不解释为何重写，不把句子生硬截断。原草稿只供改写参考：' + JSON.stringify(String(text)),
         turns: decision.turns,
+        ...this.chatGenerationOptions(decision.msg),
       }) || '').trim();
       if (rewritten && Array.from(rewritten).length < Array.from(String(text)).length) return rewritten;
     } catch { /* Keep the complete original if the extra request fails. */ }
@@ -1581,7 +1592,7 @@ class Bot {
       } else if (decision.mock) {
         text = decision.text;
       } else {
-        text = await this.llm.complete({ system: decision.system, turns: decision.turns });
+        text = await this.llm.complete({ system: decision.system, turns: decision.turns, ...this.chatGenerationOptions(decision.msg) });
         // 模型有时候只会把别人说过的话复读一遍，或者重复自己上一句，这种重写一次
         const echoReferences=this.echoReferences(decision);
         const heardList=echoReferences.heard,ownList=echoReferences.own;
@@ -1596,6 +1607,7 @@ class Bot {
             const retry = await this.llm.complete({
               system: decision.system + '\n\n【重写要求】你刚才的回答' + why + '，不合格。现在重写：换一个说法，给出新的信息或明确态度；不能出现对方原句，也不能重复你上面说过的话。',
               turns: decision.turns,
+              ...this.chatGenerationOptions(decision.msg),
             });
             if (retry && !heardList.some((h) => isEcho(retry, h)) && !ownList.some((h) => isEcho(retry, h))) text = retry;
             else text = retry || text;
@@ -1612,7 +1624,7 @@ class Bot {
         const switched = this.llm.switchFallback();
         if (switched) {
           try {
-            retried = await this.llm.complete({ system: decision.system, turns: decision.turns });
+            retried = await this.llm.complete({ system: decision.system, turns: decision.turns, ...this.chatGenerationOptions(decision.msg) });
             this.logger && this.logger.warn(`已切到备用服务商 ${switched.label} 并重试成功`);
           } catch (err2) {
             this.logger && this.logger.error('备用服务商也失败了：' + (err2 && err2.message));

@@ -100,3 +100,18 @@ test('真实模型HTTP模拟链路：先识别反馈，再用完整人设和学�
  const bootstrap=await fetch(app.url+'/api/companion/bootstrap').then(r=>r.json());const route=app.url+'/api/companion/style?ownerId=wxid_owner';assert.equal((await fetch(route)).status,403);const view=await fetch(route,{headers:{Authorization:'Bearer '+bootstrap.token}}).then(r=>r.json());assert.equal(view.rules.length,1);
  const settings=await fetch(app.url+'/api/companion/style/settings',{method:'POST',headers:{Authorization:'Bearer '+bootstrap.token,'Content-Type':'application/json'},body:JSON.stringify({ownerId:'wxid_owner',enabled:false})}).then(r=>r.json());assert.equal(settings.enabled,false);
 });
+
+
+test('日常分条纠正进入语义学习，非主人无权改变格式偏好',async t=>{
+  const f=fixture(t);
+  f.add('user','USER_FIXTURE');f.add('assistant','LINE_A\nLINE_B');
+  for(const text of ['不能分两次发么','这不是还没拆么','请把回复分条发一下']){
+    assert.equal(f.service.candidate(f.msg(text)),true);
+    f.responses.push(f.response(text,{dimension:'format',topic:text,rule:'多条短消息独立发送。'}));
+    await f.service.observe(f.msg(text));
+  }
+  assert.equal(f.calls.length,3);
+  assert.ok(f.service.view('wxid_owner').rules.some(row=>row.dimension==='format'));
+  await f.service.observe(f.msg('不能分两次发么',{senderId:'wxid_other',chatId:'wxid_other'}));
+  assert.equal(f.calls.length,3);
+});

@@ -38,7 +38,7 @@ test('微信短回复超长时只重写一次，原文提示词完整、存档�
   const app=await appFor(t), calls=[];
   app.runtime.llm.complete=async req=>{calls.push(req);return calls.length===1?'人机……好吧，被你听出来了，刚才我确实有点在念菜谱。\n\n中午想吃什么？不说也行，反正我现在也没主线，就想听你多说两句～':'饭还没吃，鱼先馋了。';};
   const result=await app.runtime.bot.handle({platform:'wechat',chatType:'private',chatId:'fixture',senderId:'fixture',text:'还是不知道吃啥啊'});
-  assert.equal(calls.length,2);assert.ok(calls.every(r=>r.system.startsWith(body)));assert.match(calls[0].system,/通常5～15字/);
+  assert.equal(calls.length,2);assert.ok(calls.every(r=>r.system.startsWith(body)));assert.match(calls[0].system,/通常5～20字/);
   assert.equal(result.reply,'饭还没吃，鱼先馋了。');assert.equal(result.bubbles.length,1);
   assert.equal(app.runtime.store.messages('wechat:u:fixture',10).filter(m=>m.role==='assistant').length,1);
 });

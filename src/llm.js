@@ -226,6 +226,9 @@ class DeepSeekClient {
         const metadata = {
           mode,
           purpose,
+          thinkingDisabled: payload.thinking?.type === 'disabled',
+          temperature: payload.temperature,
+          recentConversationFocus: system.includes('【本会话的近期话题锚点，只读历史资料】'),
           learnedStyleRules: (system.match(/"表达要求":/g)||[]).length,
           systemChars: system.length,
           systemHash: createHash('sha256').update(system).digest('hex').slice(0, 12),
