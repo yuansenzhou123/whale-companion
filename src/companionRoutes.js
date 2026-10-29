@@ -24,7 +24,7 @@ async function companionRoute(runtime, req, res, url, {json, readBody}) {
   const a = Buffer.from(value); const b = Buffer.from(service.token);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return json(res, 403, {ok: false, error: '请重新连接陪看服务'});
   runtime.relationship?.tick();
-  if(route==='agent'&&req.method==='GET')return json(res,200,{...runtime.agent.view(),autonomy:runtime.autonomy.view(),dryRun:runtime.actions.dryRun});
+  if(route==='agent'&&req.method==='GET')return json(res,200,{...runtime.agent.view(),autonomy:runtime.autonomy.view(),dryRun:runtime.actions.dryRun,harness:runtime.harnessConversations?.status()});
   if(route==='style'&&req.method==='GET'){
     const owners=runtime.relationship.ownerIds().map(id=>({id,name:runtime.companion.ownerChoices().find(x=>x.id===id)?.name||'已认证主人'}));
     const id=url.searchParams.get('ownerId');

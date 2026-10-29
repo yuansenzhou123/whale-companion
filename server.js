@@ -128,8 +128,11 @@ function createRuntime({ root = projectRoot(), env = process.env, loggerLevel } 
   const store = new Store({ file: config.paths.storeFile, limits: config.memory, logger });
   const llm = new DeepSeekClient({ config, logger });
   const bot = new Bot({ config, store, llm, logger });
+  const harnessConversations=new (require('./src/harnessConversations').HarnessConversations)({config,logger});
+  bot.harnessConversations=harnessConversations;
   const gateways = createGateways({ config, bot, logger });
   const runtime = { config, logger, store, llm, bot, gateways, startedAt: Date.now(), version: VERSION };
+  runtime.harnessConversations=harnessConversations;
   runtime.companion = new WatchCompanion({config, store, llm, vision, logger});
   runtime.relationship = new Relationship({config,store,companion:runtime.companion});
   runtime.companion.relationship = runtime.relationship;
@@ -1257,6 +1260,7 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
       try { if (server.closeAllConnections) server.closeAllConnections(); } catch { /* ignore */ }
     }, 300).unref?.();
     await new Promise((resolve) => server.close(resolve));
+    await runtime.harnessClosePromise;
     runtime.store.close();
     logger.close();
   };
@@ -1264,6 +1268,7 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     runtime.closeConfigWatcher?.();
     runtime.autonomy.close();
     runtime.agent.close();
+    runtime.harnessClosePromise=runtime.harnessConversations.close();
     runtime.styleLearning.close();
     runtime.relationship.memory.close();
     runtime.companion.close();

@@ -1586,6 +1586,18 @@ class Bot {
       const bubbles = this.finalize(decision, decision.text);
       return { action: 'reply', reply: decision.text, bubbles, reason: 'command', commandType: decision.commandType };
     }
+    if(this.harnessConversations?.enabled(decision.msg)&&!decision.canned&&!decision.mock){
+      try{
+        const generated=await this.harnessConversations.reply(decision);
+        const bubbles=this.finalize(decision,generated);
+        return {action:'reply',reply:decision.finalText||generated,bubbles,reason:'harness_session'};
+      }catch(error){
+        this.logger?.warn('[harness] 会话本轮未完成：'+error.name);
+        // Do not rerun an uncertain turn against a different backend or create an empty session.
+        const reply='这次没接上，我先停一下，免得把话接乱';
+        return {action:'reply',reply,bubbles:[reply],reason:'harness_unavailable'};
+      }
+    }
     let text = '';
     try {
       if (decision.canned) {
