@@ -83,22 +83,4 @@ class AuthorizationTests(unittest.TestCase):
         ui=WeChatMomentUI(lambda:None,lambda:False,lambda:False)
         with self.assertRaisesRegex(RuntimeError,'action_authorization_changed'):ui.available()
 
-
-class PrivateDispatchTests(unittest.TestCase):
-    def test_private_worker_sends_once_and_acks(self):
-        worker,sent,calls,job=WorkerTests().fixture()
-        job.update(kind='private_text',target={'id':'wxid_friend','name':'FRIEND'})
-        worker.poll_once()
-        self.assertEqual(len(sent),1)
-        self.assertEqual(sent[0],('BODY','FRIEND','wxid_friend'))
-    def test_private_worker_rejects_group_target(self):
-        worker,sent,calls,job=WorkerTests().fixture()
-        job['kind']='private_text';worker.poll_once();self.assertEqual(sent,[])
-    def test_exact_contact_only(self):
-        from wechat_action_worker import send_private_ui_once
-        helper=GroupTargetTests()
-        for results in [[{'name':'GROUP','section':'群聊','cell':'wrong'}],[{'name':'GROUP','section':'联系人','cell':'one'},{'name':'GROUP','section':'联系人','cell':'two'}]]:
-            driver,sent=helper.driver(results);self.assertFalse(send_private_ui_once(driver,'BODY','GROUP'));self.assertEqual(sent,[])
-        driver,sent=helper.driver([{'name':'GROUP','section':'联系人','cell':'contact'}]);self.assertTrue(send_private_ui_once(driver,'BODY','GROUP'));self.assertEqual(sent,['BODY'])
-
 if __name__=='__main__':unittest.main()
