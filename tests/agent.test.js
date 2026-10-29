@@ -171,3 +171,78 @@ test('执行心跳不会绕过真实的朋友圈关停、权限版本改变或�
     assert.equal(f.actions.validate(job.id,job.lease).valid,false);
   }
 });
+
+test('自然重试指令通过同一语义入口发布唯一草稿，理解器只收到任务元信息',async t=>{
+ const f=fixture(t);f.actions.enqueue(f.msg('seed'),{kind:'moment_draft',text:'LOCAL_DRAFT_BODY_NEVER_IN_CLASSIFIER'});
+ f.add('wxid_owner','PRIVATE_HISTORY_NOT_FOR_CLASSIFIER');
+ const draft=f.actions.state.jobs[0],text='好啦好啦现在可以去重新发了';
+ f.outputs.push({action:'publish_draft',draftId:draft.id,quote:text,confidence:.99});
+ const reply=await f.agent.handle(f.msg(text));assert.match(reply.text,/已排队/);
+ assert.equal(f.actions.state.jobs.length,2);assert.equal(f.actions.state.jobs[1].text,draft.text);
+ const input=JSON.parse(f.calls[0].turns[0].content);assert.equal(input.actionContext.tasks[0].id,draft.id);
+ assert.doesNotMatch(JSON.stringify(input),/LOCAL_DRAFT_BODY_NEVER_IN_CLASSIFIER|PRIVATE_HISTORY_NOT_FOR_CLASSIFIER/);
+});
+
+test('即时群聊代发由语义决定，正文原样取自本轮，对象来自已知群',async t=>{
+ const f=fixture(t);f.store.ensureSession('wechat:g:123@chatroom',{platform:'wechat',chatType:'group',chatId:'123@chatroom',title:'测试群'});
+ const text='麻烦去测试群跟大家说今晚八点见';
+ f.outputs.push({action:'send_group',target:'123@chatroom',body:'今晚八点见',quote:text,confidence:.99});
+ const reply=await f.agent.handle(f.msg(text));assert.match(reply.text,/已排队/);
+ assert.equal(f.actions.state.jobs[0].text,'今晚八点见');assert.equal(f.actions.state.jobs[0].target.id,'123@chatroom');
+ const repeat=f.msg('麻烦测试群发一个');f.outputs.push({action:'send_group',target:'123@chatroom',body:'INVENTED_BODY',quote:repeat.text,confidence:.99});
+ assert.match((await f.agent.handle(repeat)).text,/未创建任务/);assert.equal(f.actions.state.jobs.length,1);
+});
+
+test('已发表或结果未确认的任务不能当作草稿重发，草稿指向变化也停止',async t=>{
+ for(const status of ['sent','unknown','leased']){
+  const f=fixture(t);const {job}=f.actions.enqueue(f.msg('seed'),{kind:'moment_draft',text:'BODY'});job.status=status;
+  const text='现在可以重新发了';f.outputs.push({action:'publish_draft',draftId:job.id,quote:text,confidence:.99});
+  assert.doesNotMatch((await f.agent.handle(f.msg(text))).text,/已排队/);assert.equal(f.actions.state.jobs.length,1);
+ }
+ const f=fixture(t),old=f.actions.enqueue(f.msg('seed'),{kind:'moment_draft',text:'OLD_BODY'}).job;
+ f.actions.enqueue(f.msg('seed2'),{kind:'moment_draft',text:'NEW_BODY'});
+ const text='可以发了';f.outputs.push({action:'publish_draft',draftId:old.id,quote:text,confidence:.99});
+ assert.doesNotMatch((await f.agent.handle(f.msg(text))).text,/已排队/);assert.equal(f.actions.state.jobs.length,2);
+});
+
+test('同名群不猜，其他人和群聊消息不能授权语义代发',async t=>{
+ const f=fixture(t);for(const id of ['123@chatroom','456@chatroom'])f.store.ensureSession('wechat:g:'+id,{platform:'wechat',chatType:'group',chatId:id,title:'同名群'});
+ const text='帮我在同名群跟大家说BODY';f.outputs.push({action:'send_group',target:'123@chatroom',body:'BODY',quote:text,confidence:.99});
+ assert.match((await f.agent.handle(f.msg(text))).text,/同名群/);assert.equal(f.actions.state.jobs.length,0);
+ for(const extra of [{senderId:'wxid_bob',chatId:'wxid_bob'},{chatType:'group',chatId:'123@chatroom'},{platform:'web'}])await f.agent.handle(f.msg(text,extra));
+ assert.equal(f.actions.state.jobs.length,0);assert.equal(f.calls.length,1);
+});
+
+test('保存和发表正文通过语义入口区分，重复同一入站事件不二次排队',async t=>{
+ const f=fixture(t),text='这段先存个朋友圈文案BODY';
+ f.outputs.push({action:'save_moment',body:'BODY',quote:text,confidence:.99});const m=f.msg(text);
+ assert.match((await f.agent.handle(m)).text,/草稿/);await f.agent.handle(m);assert.equal(f.actions.state.jobs.length,1);
+ const next='给朋友圈发一句NEW_BODY';f.outputs.push({action:'publish_moment',body:'NEW_BODY',quote:next,confidence:.99});
+ assert.match((await f.agent.handle(f.msg(next))).text,/已排队/);assert.ok(f.actions.state.jobs.some(j=>j.kind==='moment_text'&&j.text==='NEW_BODY'&&j.status==='queued'));
+});
+
+test('任务状态可语义查询取消；假设、否定和低置信度不触发发送',async t=>{
+ const f=fixture(t),job=f.actions.enqueue(f.msg('seed'),{kind:'moment_text',text:'BODY'}).job;
+ const cancel='先把这个排队的停掉';f.outputs.push({action:'cancel_action',jobId:job.id,quote:cancel,confidence:.99});
+ assert.match((await f.agent.handle(f.msg(cancel))).text,/取消/);assert.equal(job.status,'cancelled');
+ for(const text of ['不要发朋友圈BODY','如果去发朋友圈BODY']){
+  f.outputs.push({action:'publish_moment',body:'BODY',quote:text,confidence:.99});
+  assert.doesNotMatch((await f.agent.handle(f.msg(text))).text,/已排队/);
+ }
+ const text='发朋友圈BODY';f.outputs.push({action:'publish_moment',body:'BODY',quote:text,confidence:.9});
+ assert.doesNotMatch((await f.agent.handle(f.msg(text))).text,/已排队/);assert.equal(f.actions.state.jobs.length,1);
+});
+
+
+
+test('语义理解期间权限关闭，或新任务已发表，不沿用过期草稿状态',async t=>{
+ for(const change of [f=>{f.config.actions.enabled=false;},f=>{const j=f.actions.enqueue(f.msg('other'),{kind:'moment_text',text:'ALREADY_SENT'}).job;j.status='sent';}]){
+  const f=fixture(t),draft=f.actions.enqueue(f.msg('seed'),{kind:'moment_draft',text:'BODY'}).job;
+  let entered,release;const started=new Promise(r=>entered=r),text='现在可以去重新发了';
+  f.outputs.push(()=>{entered();return new Promise(r=>release=r);});
+  const pending=f.agent.handle(f.msg(text));await started;change(f);
+  release(JSON.stringify({action:'publish_draft',draftId:draft.id,quote:text,confidence:.99}));
+  assert.doesNotMatch((await pending).text,/已排队/);
+  assert.equal(f.actions.state.jobs.filter(j=>j.status==='queued').length,0);
+ }
+});
