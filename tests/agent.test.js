@@ -45,7 +45,7 @@ test('附加条件不满足时正常聊天，满足时严格使用主人指定�
 });
 test('同名歧义和无法定位的联系人会澄清，不猜目标，不保存伪造证据',async t=>{
  const f=fixture(t);f.agent.updateContacts([{id:'wxid_alice',name:'测试联系人甲'},{id:'wxid_bob',name:'测试联系人甲'}]);f.outputs.push(f.compile());assert.match((await f.agent.handle(f.msg(f.instruction))).text,/不能唯一认出/);assert.equal(f.agent.active().length,0);
- f.agent.updateContacts([{id:'wxid_alice',name:'测试联系人甲'}]);f.outputs.push(f.compile(undefined,{quote:'主人没有说过的要求'}));assert.equal(await f.agent.handle(f.msg(f.instruction)),null);assert.equal(f.agent.active().length,0);
+ f.agent.updateContacts([{id:'wxid_alice',name:'测试联系人甲'}]);f.outputs.push(f.compile(undefined,{quote:'主人没有说过的要求'}));assert.match((await f.agent.handle(f.msg(f.instruction))).text,/还没保存成功/);assert.equal(f.agent.active().length,0);
 });
 test('可语义撤销，今天的交代会到期，未限定的任务跨天仍有效',async t=>{
  const f=fixture(t);f.outputs.push(f.compile());await f.agent.handle(f.msg(f.instruction));f.advance(86400000);assert.equal(f.agent.active().length,1);
@@ -67,6 +67,76 @@ test('朋友圈证据仅取今天本人私聊、相关群聊和实际共同观�
  const facts=f.autonomy.facts(),text=JSON.stringify(facts);assert.ok(facts.some(r=>r.kind==='owner_private'));assert.ok(facts.some(r=>r.kind==='group_about_owner'));assert.ok(facts.some(r=>r.kind==='watched_together'));assert.doesNotMatch(text,/OTHER_PRIVATE_MARKER|完全无关|昨天的记录/);
 });
 const HOUR=3600000;
+test('对其他人的统一相处分寸可在无联系人时保存，重启后进入其他人的私聊及群聊上下文',async t=>{
+ const f=fixture(t),text='以后对其他人说话保持普通朋友的分寸';f.agent.updateContacts([]);
+ f.add('wxid_owner',text);f.outputs.push(f.compile(text,{scope:'others',target:'',key:'closeness'}));
+ assert.match((await f.agent.handle(f.msg(text))).text,/私聊和群聊/);
+ assert.equal(f.agent.active()[0].target,null);assert.equal(f.agent.view().policies[0].scope,'others');
+ assert.equal(f.agent.state.lastUnderstanding.status,'saved');
+ const guest=f.msg('你好',{senderId:'wxid_unknown',chatId:'wxid_unknown'});
+ assert.equal(await f.agent.handle(guest),null);assert.match(f.agent.contextFor(guest),/普通朋友的分寸/);
+ const group={...guest,chatType:'group',chatId:'123@chatroom'};assert.equal(await f.agent.handle(group),null);
+ assert.match(f.agent.contextFor(group),/普通朋友的分寸/);
+ assert.match(f.agent.contextFor({...guest,senderName:'测试主人',isMaster:true}),/程序已确认当前发言者不是主人/);
+ assert.equal(f.agent.contextFor({...group,senderId:'wxid_owner'}),'');
+ assert.equal(f.agent.contextFor({...guest,platform:'web'}),'');
+ assert.equal(f.shared.state.records.find(r=>r.text===text).kind,'agent_instruction');
+ const restarted=new CompanionAgent(f.args);assert.match(restarted.contextFor(group),/普通朋友的分寸/);restarted.close();
+ assert.equal(f.actions.state.jobs.length,0);assert.equal(f.calls.length,1);
+});
+
+test('统一要求按主题修改撤销，不覆盖指定联系人或不同主题，不扩大指定联系人的范围',async t=>{
+ const f=fixture(t);f.outputs.push(f.compile());await f.agent.handle(f.msg(f.instruction));
+ const original=f.agent.active()[0];delete original.scope; // Existing on-disk rules remain contact-scoped.
+ const first='以后对其他人说话保持普通朋友的分寸';f.outputs.push(f.compile(first,{scope:'others',target:'',key:'closeness'}));await f.agent.handle(f.msg(first));
+ const saved=f.agent.active().find(r=>r.scope==='others');
+ const second='以后对其他人不用英文称呼';f.outputs.push(f.compile(second,{scope:'others',target:'',key:'addressing'}));await f.agent.handle(f.msg(second));
+ const revision='这个分寸要求只在今天有效';f.outputs.push(f.compile(revision,{scope:'others',target:'',key:'closeness',duration:'today',replaces:[saved.id]}));await f.agent.handle(f.msg(revision));
+ assert.equal(f.agent.active().length,3);assert.equal(saved.status,'superseded');assert.equal(original.status,'active');
+ assert.doesNotMatch(f.agent.contextFor(f.msg('你好',{senderId:'wxid_bob',chatId:'wxid_bob'})),/测试联系人甲以后找你/);
+ const cancel='取消对其他人的称呼要求';const nameRule=f.agent.active().find(r=>r.key==='addressing');
+ f.outputs.push(f.compile(cancel,{action:'revoke',scope:'others',target:'',replaces:[nameRule.id]}));await f.agent.handle(f.msg(cancel));
+ assert.equal(nameRule.status,'revoked');assert.equal(original.status,'active');
+ f.advance(86400000);assert.equal(f.agent.active().length,1);
+ f.agent.command(f.msg('清空所有记忆'));assert.equal(f.agent.active().length,0);
+});
+
+test('理解拒绝或闲聊未保存时不虚假承诺，统一要求不能由其他人或群聊授权',async t=>{
+ const f=fixture(t),text='以后对其他人说话保持普通朋友的分寸';
+ for(const change of [{senderId:'wxid_bob',chatId:'wxid_bob',senderName:'测试主人',isMaster:true},{chatType:'group',chatId:'123@chatroom'}])await f.agent.handle(f.msg(text,change));
+ assert.equal(f.calls.length,0);
+ const invalid=f.msg(text);f.outputs.push(f.compile(text,{scope:'others',target:'',quote:'不存在的引用'}));
+ assert.match((await f.agent.handle(invalid)).text,/还没保存成功/);assert.equal(f.agent.active().length,0);
+ assert.equal(f.agent.view().lastUnderstanding.status,'rejected');assert.match(f.agent.contextFor(invalid),/不要宣称已记住/);
+ const normal=f.msg('今天吃什么');f.outputs.push({action:'none'});assert.equal(await f.agent.handle(normal),null);
+ assert.match(f.agent.contextFor(normal),/本轮没有新增或修改/);
+});
+
+test('主人保存期间到达的群消息等保存结束再采用要求，未被叫到仍不会新增主动回复',async t=>{
+ const f=fixture(t),text='以后对其他人说话保持普通朋友的分寸';
+ let release,entered;const started=new Promise(r=>entered=r);f.outputs.push(()=>{entered();return new Promise(r=>release=r);});
+ const owner=f.agent.handle(f.msg(text));await started;
+ let finished=false;const group=f.msg('你好',{senderId:'wxid_bob',chatType:'group',chatId:'123@chatroom'});
+ const guest=f.agent.handle(group).then(r=>{finished=true;return r;});await new Promise(r=>setImmediate(r));assert.equal(finished,false);
+ release(JSON.stringify(f.compile(text,{scope:'others',target:'',key:'closeness'})));await owner;assert.equal(await guest,null);
+ assert.match(f.agent.contextFor(group),/普通朋友的分寸/);
+});
+
+test('统一要求实际进入 Bot 普通回复提示词，群聊触发门槛和主人身份范围不变',async t=>{
+ const f=fixture(t),{Bot}=require('../src/bot'),text='以后对其他人说话保持普通朋友的分寸';
+ f.outputs.push(f.compile(text,{scope:'others',target:'',key:'closeness'}));await f.agent.handle(f.msg(text));
+ const bot=new Bot({...f.args,agent:f.agent,now:()=>new Date(f.args.now()),mockChunkDelayMs:0});
+ bot.agent=f.agent;
+ const other=f.msg('你好',{senderId:'wxid_bob',chatId:'wxid_bob'});const decision=await bot.decide(other);
+ assert.equal(decision.action,'reply');assert.match(decision.system,/当前回复必须采用的已保存相处要求/);assert.match(decision.system,/普通朋友的分寸/);
+ assert.ok(decision.system.startsWith(f.config.persona.customPrompt));
+ const group=await bot.decide(f.msg('今天的话题',{chatType:'group',chatId:'123@chatroom',senderId:'wxid_bob'}));assert.equal(group.action,'ignore');
+ const addressed=await bot.decide(f.msg('@鲸鲸 你好',{chatType:'group',chatId:'123@chatroom',senderId:'wxid_bob',atMe:true}));
+ assert.equal(addressed.action,'reply');assert.match(addressed.system,/普通朋友的分寸/);
+ const owner=await bot.decide(f.msg('你好'));assert.equal(owner.action,'reply');assert.doesNotMatch(owner.system,/当前回复必须采用的已保存相处要求/);
+ assert.equal(f.actions.state.jobs.length,0);
+});
+
 test('自主决策通过事实隐私核对后自动入执行队列，无需当次发布命令，每天只保留一次尝试',async t=>{
  const f=fixture(t),id=evidence(f);post(f,id);const result=await f.autonomy.tick({force:true});assert.equal(result.decision,'queued');assert.equal(f.actions.state.jobs.length,1);assert.equal(f.actions.state.jobs[0].origin,'agent');assert.equal(f.actions.allowed(f.actions.state.jobs[0]),true);
  assert.ok(f.calls[0].system.startsWith(f.config.persona.customPrompt));assert.equal(f.calls[1].purpose,'agent_moment_review');assert.equal((await f.autonomy.tick({force:true})).decision,'daily_reserved');assert.equal(f.calls.length,2);

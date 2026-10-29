@@ -907,13 +907,14 @@ class Bot {
     if (this.relationship) system += this.relationship.contextFor({...msg,isMaster});
     if (this.sharedMemory) system += this.sharedMemory.contextFor({...msg,isMaster});
     if(this.wechatActions)system+=this.wechatActions.contextFor(msg);
-    if(this.agent)system+=this.agent.contextFor(msg);
     const turns = this.buildTurns(msg, hasText ? history.slice(0, -1) : history);
     msg.replyNeedsRoom = continuationNeedsRoom(this.config, msg, turns);
     if (this.config.persona.promptMode === 'full') system += conversationFocus(msg, turns);
     if(this.styleLearning)system += this.styleLearning.contextFor(msg);
     system += rhythmHint(this.rhythmFor(msg));
     system += conversationContract(msg);
+    // Apply persisted owner requirements after persona, history and learned style hints.
+    if(this.agent)system+=this.agent.contextFor(msg);
 
     // 对喷的台词交给模型自己现编；只有没配 Key 的演示模式才用本地库顶着
     if (fight && this.llm.isMock) {
