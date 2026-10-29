@@ -79,6 +79,7 @@ class CompanionAgent {
     const command=this.command(msg);if(command)return {kind:'owner',...command};
     if(this.trusted(msg)){
       if(!this.enabled()||!textOf(msg)||this.llm.isMock)return null;
+      const pendingStatus=privateDispatch.confusionStatus(this,msg);if(pendingStatus)return pendingStatus;
       const id=this.owner(msg.senderId),prior=this.pending.get(id)||Promise.resolve();
       const job=prior.catch(()=>{}).then(()=>this.remember(msg));this.pending.set(id,job);
       try{return await job;}finally{if(this.pending.get(id)===job)this.pending.delete(id);}
@@ -103,7 +104,7 @@ class CompanionAgent {
     const existing=this.active(ownerId),lookup=text,pendingPrivate=privateDispatch.pending(this,ownerId);
     const contacts=this.contacts().filter(r=>lookup.includes(r.id)||lookup.includes(r.name)||existing.some(rule=>rule.target.id===r.id)||pendingPrivate?.target.id===r.id).slice(0,80);
     const actionContext=semanticActions.contextFor(this.actions,msg,this.now());
-    if(pendingPrivate)actionContext.pendingPrivate=pendingPrivate;
+    if(pendingPrivate)actionContext.pendingPrivate=privateDispatch.pendingContext(pendingPrivate);
     let result;
     try{result=await this.request(COMPILER+semanticActions.PROMPT+privateDispatch.PROMPT,{message:text,knownContacts:contacts,actionContext,nowBeijing:new Date(this.now()+8*3600000).toISOString().replace(/Z$/,'+08:00'),existing:existing.map(r=>({id:r.id,target:r.target,instruction:r.instruction,mode:r.mode,condition:r.condition,key:r.key}))},'agent_memory');}
     catch(error){restore();msg.agentUnderstandingFailed=true;this.logger?.warn('[agent] 本轮要求理解未完成：'+(error.name||'Error'));return null;}

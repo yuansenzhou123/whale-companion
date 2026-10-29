@@ -310,3 +310,47 @@ test('整理私信期间撤销权限，不继续审核或创建发送任务',asy
  });
  assert.doesNotMatch((await f.agent.handle(f.msg(text))).text,/已排队/);assert.equal(f.calls.length,2);assert.equal(f.actions.state.jobs.length,0);
 });
+
+test('解释任务保留开始时的主人依据，后续追问不挤掉话题，也不把快照送进意图分类器',async t=>{
+ const f=fixture(t),text='去和测试联系人甲解释清楚';
+ f.add('wxid_owner','TASK_START_BOUNDARY_EVIDENCE',{ts:f.args.now()-1000});f.add('wxid_owner',text,{ts:f.args.now()});
+ f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,compose:true},{ready:false,question:'要说明哪件事？'});
+ await f.agent.handle(f.msg(text));assert.ok(f.agent.state.pendingPrivate.wxid_owner.basis.some(r=>r.text==='TASK_START_BOUNDARY_EVIDENCE'));
+ for(let n=0;n<12;n++)f.add('wxid_owner','LATER_CLARIFICATION_'+n,{role:n%2?'assistant':'user',ts:f.args.now()});
+ const next='你自己根据上文理解';f.outputs.push({action:'send_private',target:'wxid_alice',quote:next,confidence:.99,compose:true},
+   {ready:true,body:'SUPPORTED_BOUNDARY_SUMMARY'},{supported:true,withinScope:true});
+ assert.match((await f.agent.handle(f.msg(next))).text,/已排队/);
+ assert.doesNotMatch(JSON.stringify(f.calls[2].turns),/TASK_START_BOUNDARY_EVIDENCE/);
+ assert.match(JSON.stringify(f.calls[3].turns),/TASK_START_BOUNDARY_EVIDENCE/);
+ assert.doesNotMatch(JSON.stringify(f.calls[3].turns),/LATER_CLARIFICATION_11/);
+});
+
+test('核对提出具体问题时只修正一次，通过后只排一次发送任务',async t=>{
+ const f=fixture(t),text='去和测试联系人甲解释清楚';f.add('wxid_owner','OWNER_POSITION',{ts:f.args.now()-1000});
+ f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,compose:true},
+  {ready:true,body:'UNSUPPORTED_CLAIM'},{supported:false,withinScope:true,reasonCode:'unsupported_claim',reason:'这句断言没有原话支持'},
+  {ready:true,body:'CORRECTED_BODY'},{supported:true,withinScope:true});
+ assert.match((await f.agent.handle(f.msg(text))).text,/已排队/);
+ assert.equal(f.calls.length,5);assert.match(JSON.stringify(f.calls[3].turns),/这句断言没有原话支持/);
+ assert.equal(f.actions.state.jobs.length,1);assert.equal(f.actions.state.jobs[0].text,'CORRECTED_BODY');
+});
+
+test('两次核对不通过保留草稿并说明卡点，问号只返回状态，不复读或自动发送',async t=>{
+ const f=fixture(t),text='去和测试联系人甲解释清楚';
+ f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,compose:true},
+  {ready:true,body:'FIRST_DRAFT'},{supported:false,withinScope:false,reason:'缺少支持这个判断的原话'},
+  {ready:true,body:'SECOND_DRAFT'},{supported:false,withinScope:false,reason:'第二稿仍包含无依据判断'});
+ const answer=await f.agent.handle(f.msg(text));assert.match(answer.text,/SECOND_DRAFT/);assert.match(answer.text,/无依据判断/);
+ assert.doesNotMatch(answer.text,/具体立场或要点是什么/);assert.equal(f.calls.length,5);assert.equal(f.actions.state.jobs.length,0);
+ const pending=f.agent.state.pendingPrivate.wxid_owner;assert.equal(pending.draft,'SECOND_DRAFT');assert.equal(pending.reasonCode,'review_rejected');
+ const status=await f.agent.handle(f.msg('?'));assert.match(status.text,/还没有发送/);assert.notEqual(status.text,'?');assert.equal(f.calls.length,5);
+});
+
+test('保存的任务依据仍受遗忘过滤，不能在澄清时重新带回已移除内容',async t=>{
+ const f=fixture(t),text='去和测试联系人甲解释清楚';f.add('wxid_owner','FORGOTTEN_TASK_POINT',{ts:f.args.now()-1000});
+ f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,compose:true},{ready:false,question:'还缺哪一点？'});
+ await f.agent.handle(f.msg(text));
+ const filter=f.shared.filterHistory.bind(f.shared);f.shared.filterHistory=(msg,rows)=>filter(msg,rows).filter(r=>r.text!=='FORGOTTEN_TASK_POINT');
+ const next='自己理解一下';f.outputs.push({action:'send_private',target:'wxid_alice',quote:next,confidence:.99,compose:true},{ready:false,question:'当前还无法确定要点'});
+ await f.agent.handle(f.msg(next));assert.doesNotMatch(JSON.stringify(f.calls.slice(2)),/FORGOTTEN_TASK_POINT/);assert.equal(f.actions.state.jobs.length,0);
+});
