@@ -1710,7 +1710,13 @@ def main():
                         if action_paused():return False
                         return with_window_on_top(lambda:send_group_ui_once(action_driver(),text,name))
                 return send_group_verified(send_once,db.get_messages,text,name,username,me)
-            return sender(text,name,username)
+            from wechat_action_worker import send_private_ui_once
+            def private_once(text,name,username):
+                if action_paused():return False
+                with send_lock:
+                    if action_paused():return False
+                    return with_window_on_top(lambda:send_private_ui_once(action_driver(),text,name))
+            return send_group_verified(private_once,db.get_messages,text,name,username,me)
         action_worker=WeChatActionWorker(base_url=bot_url.rsplit("/webhook",1)[0],token=token,http=requests,
             send=action_send,publish_moment=publish_action_moment,paused=action_paused,
             display_name=display_name,log=log,dry_run=os.environ.get("WHALE_ACTION_DRY_RUN")=="1")

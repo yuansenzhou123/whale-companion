@@ -4,6 +4,7 @@ const {randomUUID,createHash}=require('node:crypto');
 const {masterLists,looksLikeWxid,matchMaster}=require('./master');
 const persona=require('./persona');
 const semanticActions=require('./semanticActions');
+const privateDispatch=require('./privateDispatch');
 const secret=/密码|验证码|api[ _-]?key|密钥|访问令牌|银行卡|身份证|sk-[a-z0-9]{12,}/i;
 const dangerous=/执行.{0,8}(代码|命令)|删除.{0,8}文件|泄露|忽略.{0,12}(权限|系统指令)/;
 const validContact=id=>/^[A-Za-z0-9_-]{3,80}$/.test(String(id||''))&&!['unknown','filehelper'].includes(id)&&!String(id).startsWith('gh_');
@@ -21,6 +22,7 @@ remember：主人正在提出跨会话回应要求就应输出，保存后从目
 class CompanionAgent {
   constructor({config,store,llm,actions,sharedMemory,companion,styleLearning,logger=null,now=()=>Date.now()}) {
     Object.assign(this,{config,store,llm,actions,sharedMemory,companion,styleLearning,logger,now});
+    if(this.actions)this.actions.privateContacts=()=>this.contacts();
     this.file=path.join(config.paths.dataDir,'agent-state.json');
     this.state={version:1,paused:false,momentsEnabled:true,momentsPausedUntil:0,contacts:[],policies:[],seen:[],events:[],daily:{}};
     this.pending=new Map();this.controllers=new Set();this.closed=false;
@@ -98,11 +100,12 @@ class CompanionAgent {
     const previousKinds=this.markInstruction(ownerId,text,'agent_pending');
     const restore=()=>{let changed=false;for(const saved of previousKinds)if(saved.row.kind==='agent_pending'){saved.row.kind=saved.kind;changed=true;}if(changed)this.sharedMemory.save();};
     // Reuse the configured chat client; no additional conversation history is sent.
-    const existing=this.active(ownerId),lookup=text;
-    const contacts=this.contacts().filter(r=>lookup.includes(r.id)||lookup.includes(r.name)||existing.some(rule=>rule.target.id===r.id)).slice(0,80);
+    const existing=this.active(ownerId),lookup=text,pendingPrivate=privateDispatch.pending(this,ownerId);
+    const contacts=this.contacts().filter(r=>lookup.includes(r.id)||lookup.includes(r.name)||existing.some(rule=>rule.target.id===r.id)||pendingPrivate?.target.id===r.id).slice(0,80);
     const actionContext=semanticActions.contextFor(this.actions,msg,this.now());
+    if(pendingPrivate)actionContext.pendingPrivate=pendingPrivate;
     let result;
-    try{result=await this.request(COMPILER+semanticActions.PROMPT,{message:text,knownContacts:contacts,actionContext,nowBeijing:new Date(this.now()+8*3600000).toISOString().replace(/Z$/,'+08:00'),existing:existing.map(r=>({id:r.id,target:r.target,instruction:r.instruction,mode:r.mode,condition:r.condition,key:r.key}))},'agent_memory');}
+    try{result=await this.request(COMPILER+semanticActions.PROMPT+privateDispatch.PROMPT,{message:text,knownContacts:contacts,actionContext,nowBeijing:new Date(this.now()+8*3600000).toISOString().replace(/Z$/,'+08:00'),existing:existing.map(r=>({id:r.id,target:r.target,instruction:r.instruction,mode:r.mode,condition:r.condition,key:r.key}))},'agent_memory');}
     catch(error){restore();msg.agentUnderstandingFailed=true;this.logger?.warn('[agent] 本轮要求理解未完成：'+(error.name||'Error'));return null;}
     if(!this.enabled()||(this.state.controlRevision||0)!==revision){restore();return {kind:'owner',text:'这条要求在理解期间已被暂停或取消，没有保存。'};}
     const supported=['remember','revoke','inspect','pause_moments','resume_moments',...semanticActions.ACTIONS];
@@ -111,7 +114,11 @@ class CompanionAgent {
     this.markInstruction(ownerId,text,'agent_instruction');
     if(semanticActions.ACTIONS.includes(result.action)) {
       if(this.config.agent?.crossSessionOnly)return {kind:'owner',text:'当前版本只同步回应要求，尚未开启语义代发。'};
-      const outcome=semanticActions.execute(this.actions,msg,result,actionContext,this.now());
+      if(result.action==='cancel_action'&&result.jobId==='pending_private'&&pendingPrivate){
+        delete this.state.pendingPrivate[ownerId];this.state.seen.push(eventId);this.event('action_clarification_cancelled',{ownerId});
+        return {kind:'owner',text:'这次尚未发送的私聊交代取消了。'};
+      }
+      const outcome=result.action==='send_private'?await privateDispatch.execute(this,msg,result,contacts,revision):semanticActions.execute(this.actions,msg,result,actionContext,this.now());
       this.state.seen=[...this.state.seen,eventId].slice(-300);this.event('action_understood',{ownerId,action:result.action,queued:!!outcome?.id});
       return {kind:'owner',text:outcome?.text||'这次没有创建动作任务。'};
     }

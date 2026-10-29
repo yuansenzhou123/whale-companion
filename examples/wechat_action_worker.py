@@ -16,6 +16,17 @@ def send_group_ui_once(driver,text,name):
     return bool(driver.send_text(text))
 
 
+def send_private_ui_once(driver,text,name):
+    if not driver.ensure_window() or not driver.back_to_chat_tab():return False
+    box=driver._search_box(driver._win,expand=True)
+    if box is None or not driver._set_text(box,name):return False
+    matches=[r for r in driver._collect_results(name) if r.get('name')==name and r.get('section')=='联系人']
+    if len(matches)!=1:return False
+    driver._click_ctrl(matches[0]['cell']);time.sleep(.7)
+    if driver.current_chat()!=name:return False
+    return bool(driver.send_text(text))
+
+
 def send_group_verified(send,read_messages,text,name,username,me,clock=time.monotonic,sleep=time.sleep):
     def identity(row):return (str(row.get('local_id')),str(row.get('shard')),str(row.get('server_id')))
     before={identity(row) for row in read_messages(username,limit=8)}
@@ -68,9 +79,9 @@ class WeChatActionWorker:
         if not valid:ack['error']='任务内容、授权或执行状态已改变'
         elif self.dry_run or job.get('dryRun'):
             ack['outcome']='simulated'
-        elif job.get('kind')=='group_text':
+        elif job.get('kind') in ('group_text','private_text'):
             username=str(target.get('id') or '')
-            if not username.endswith('@chatroom') or not target.get('name'):ack['error']='群聊目标不正确'
+            if not target.get('name') or (job.get('kind')=='group_text' and not username.endswith('@chatroom')) or (job.get('kind')=='private_text' and not username.startswith('wxid_')):ack['error']='会话目标不正确'
             else:
                 try:
                     ok=self.send(text,target['name'],username)

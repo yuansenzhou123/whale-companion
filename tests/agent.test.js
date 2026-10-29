@@ -246,3 +246,67 @@ test('语义理解期间权限关闭，或新任务已发表，不沿用过期�
   assert.equal(f.actions.state.jobs.filter(j=>j.status==='queued').length,0);
  }
 });
+
+test('主人明确私聊代发创建独立任务，核实后写入目标私聊记录',async t=>{
+ const f=fixture(t),text='去找测试联系人甲，原样告诉他：PRIVATE_BODY';
+ f.outputs.push({action:'send_private',target:'wxid_alice',body:'PRIVATE_BODY',quote:text,confidence:.99,compose:false});
+ const answer=await f.agent.handle(f.msg(text));assert.match(answer.text,/已排队/);
+ const job=f.actions.state.jobs[0];assert.equal(job.kind,'private_text');assert.equal(job.target.id,'wxid_alice');
+ const leased=f.actions.next().job;assert.ok(leased);f.actions.ack({id:leased.id,lease:leased.lease,outcome:'sent'});
+ assert.equal(f.store.messages('wechat:u:wxid_alice',10).at(-1).text,'PRIVATE_BODY');
+ assert.equal(f.store.messages('wechat:u:wxid_alice',10).at(-1).sent,true);
+});
+
+test('解释当前话题经单独整理和范围核对再发送，不检索其他私聊',async t=>{
+ const f=fixture(t);f.add('wxid_owner','NECESSARY_RECENT_POINT',{ts:f.args.now()-1000});f.add('wxid_bob','OTHER_PRIVATE_SECRET');
+ const text='去和测试联系人甲解释清楚';f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,compose:true},
+  {ready:true,body:'COMPOSED_PRIVATE_BODY',sourceIds:['recent-0']},{supported:true,withinScope:true});
+ const answer=await f.agent.handle(f.msg(text));assert.match(answer.text,/已排队/);assert.equal(f.actions.state.jobs[0].text,'COMPOSED_PRIVATE_BODY');
+ assert.equal(f.calls.length,3);assert.equal(f.calls[1].purpose,'agent_private_compose');assert.equal(f.calls[2].purpose,'agent_private_review');
+ assert.match(JSON.stringify(f.calls[1].turns),/NECESSARY_RECENT_POINT/);assert.doesNotMatch(JSON.stringify(f.calls),/OTHER_PRIVATE_SECRET/);
+ assert.doesNotMatch(JSON.stringify(f.calls[0].turns),/NECESSARY_RECENT_POINT/);
+});
+
+test('解释不明确先问要点，十分钟内补充可接上同一联系人，普通聊天不补发',async t=>{
+ const f=fixture(t),first='去和测试联系人甲解释清楚';f.outputs.push({action:'send_private',target:'wxid_alice',quote:first,confidence:.99,compose:true},{ready:false,question:'具体要说明什么？'});
+ assert.match((await f.agent.handle(f.msg(first))).text,/还没有发送/);assert.equal(f.actions.state.jobs.length,0);
+ f.outputs.push({action:'none'});assert.equal(await f.agent.handle(f.msg('今天风好大')),null);assert.equal(f.actions.state.jobs.length,0);
+ const second='就原样告诉他：FOLLOWUP_BODY';f.outputs.push({action:'send_private',target:'wxid_alice',quote:second,confidence:.99,compose:false,body:'FOLLOWUP_BODY'});
+ assert.match((await f.agent.handle(f.msg(second))).text,/已排队/);assert.equal(f.actions.state.jobs[0].target.id,'wxid_alice');assert.equal(f.agent.state.pendingPrivate.wxid_owner,undefined);
+});
+
+test('生成正文核对失败、低置信度、同名联系人、非主人不能代发',async t=>{
+ const f=fixture(t),text='去和测试联系人甲解释清楚';f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,compose:true},{ready:true,body:'UNSUPPORTED_BODY'},{supported:false,withinScope:false});
+ assert.match((await f.agent.handle(f.msg(text))).text,/还没有发送/);assert.equal(f.actions.state.jobs.length,0);
+ const low='告诉测试联系人甲BODY';f.outputs.push({action:'send_private',target:'wxid_alice',quote:low,confidence:.9,body:'BODY'});
+ assert.doesNotMatch((await f.agent.handle(f.msg(low))).text,/已排队/);
+ f.agent.updateContacts([{id:'wxid_alice',name:'同名好友'},{id:'wxid_bob',name:'同名好友'}]);
+ const dup='告诉同名好友BODY';f.outputs.push({action:'send_private',target:'wxid_alice',quote:dup,confidence:.99,body:'BODY'});
+ assert.doesNotMatch((await f.agent.handle(f.msg(dup))).text,/已排队/);assert.equal(f.actions.state.jobs.length,0);
+ const before=f.calls.length;await f.agent.handle(f.msg(text,{senderId:'wxid_bob',chatId:'wxid_bob'}));assert.equal(f.calls.length,before);
+});
+
+test('私聊权限关闭或撤销会阻止入队和已经租用的任务',async t=>{
+ const f=fixture(t),text='告诉测试联系人甲BODY';f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,body:'BODY'});
+ await f.agent.handle(f.msg(text));const job=f.actions.next().job;assert.ok(job);
+ f.config.actions.privateText=false;assert.equal(f.actions.validate(job.id,job.lease).valid,false);
+ f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,body:'BODY'});
+ assert.doesNotMatch((await f.agent.handle(f.msg(text))).text,/已排队/);assert.equal(f.actions.state.jobs.length,1);
+});
+
+test('待补充私聊可取消，取消后不再隐式沿用联系人',async t=>{
+ const f=fixture(t),text='去找测试联系人甲说一下';f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,body:''});
+ await f.agent.handle(f.msg(text));assert.ok(f.agent.state.pendingPrivate.wxid_owner);
+ const cancel='这个就先不用去了';f.outputs.push({action:'cancel_action',jobId:'pending_private',quote:cancel,confidence:.99});
+ assert.match((await f.agent.handle(f.msg(cancel))).text,/取消/);assert.equal(f.agent.state.pendingPrivate.wxid_owner,undefined);
+ const later='就告诉他BODY';f.outputs.push({action:'send_private',target:'wxid_alice',quote:later,confidence:.99,body:'BODY'});
+ assert.doesNotMatch((await f.agent.handle(f.msg(later))).text,/已排队/);assert.equal(f.actions.state.jobs.length,0);
+});
+
+test('整理私信期间撤销权限，不继续审核或创建发送任务',async t=>{
+ const f=fixture(t),text='去和测试联系人甲解释一下';
+ f.outputs.push({action:'send_private',target:'wxid_alice',quote:text,confidence:.99,compose:true},()=>{
+   f.config.actions.privateText=false;return JSON.stringify({ready:true,body:'BODY'});
+ });
+ assert.doesNotMatch((await f.agent.handle(f.msg(text))).text,/已排队/);assert.equal(f.calls.length,2);assert.equal(f.actions.state.jobs.length,0);
+});
